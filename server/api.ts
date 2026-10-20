@@ -55,11 +55,14 @@ async function journal(
   db: Sql, u: Utilisateur, m: { ref: string; nom: string }, type: string, titre: string,
   x: { lieuId?: string | null; lieuNom?: string | null; gps?: unknown; commentaire?: string | null; photos?: string[] } = {},
 ) {
-  await db`insert into evenements ${db({
-    materielRef: m.ref, materielNom: m.nom, type, titre, userId: u.id, userNom: u.nom,
-    lieuId: x.lieuId ?? null, lieuNom: x.lieuNom ?? null, gps: x.gps ? db.json(x.gps as never) : null,
-    commentaire: x.commentaire ?? null, photos: db.json(x.photos ?? []),
-  })}`
+  // Sans lieu précisé, on reprend le lieu actuel du matériel
+  const lieuId = x.lieuId ?? null
+  const lieuNom = x.lieuNom ?? null
+  await db`insert into evenements (materiel_ref, materiel_nom, type, titre, user_id, user_nom, lieu_id, lieu_nom, gps, commentaire, photos)
+    select ${m.ref}, ${m.nom}, ${type}, ${titre}, ${u.id}, ${u.nom},
+      coalesce(${lieuId}::uuid, (select lieu_id from materiel where ref = ${m.ref})),
+      coalesce(${lieuNom}::text, (select lieu_nom from materiel where ref = ${m.ref})),
+      ${x.gps ? db.json(x.gps as never) : null}, ${x.commentaire ?? null}, ${db.json(x.photos ?? [])}`
 }
 
 async function lieu(db: Sql, id: unknown) {

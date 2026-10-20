@@ -32,8 +32,8 @@ export default function Scan() {
     if (!lieuCourant) { setChoixLieu(true); return }
     setBusy(true)
     try {
-      const { deplace, propose } = await inventorier({ user: profil, lieu: lieuCourant }, trouve, lieuCourant)
-      toast(deplace ? `Inventorié · déplacé vers ${lieuCourant.nom}` : propose ? 'Inventorié · déplacement proposé aux admins' : 'Inventorié ✓')
+      const { deplace, propose, enAttente } = await inventorier({ user: profil, lieu: lieuCourant }, trouve, lieuCourant)
+      toast(enAttente ? 'Pas de réseau : enregistré, envoi au retour du réseau' : deplace ? `Inventorié · déplacé vers ${lieuCourant.nom}` : propose ? 'Inventorié · déplacement proposé aux admins' : 'Inventorié ✓', enAttente ? 'info' : 'ok')
       setTrouve(null)
     } catch (e) { toast('Erreur : ' + String(e), 'err') } finally { setBusy(false) }
   }

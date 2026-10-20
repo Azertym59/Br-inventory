@@ -1,96 +1,81 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { onAuthStateChanged, signInAnonymously, signOut, type User } from 'firebase/auth'
-import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore'
-import { auth, db } from '../firebase'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { get, HorsLigne, patch, post, quandDeconnecte } from './api'
 import type { Role, Utilisateur } from '../types'
 
 interface AuthState {
-  firebaseUser: User | null
   profil: Utilisateur | null
   loading: boolean
+  configurationRequise: boolean
   anonyme: boolean
-  logout: () => Promise<void>
+  connexion: (email: string, mdp: string) => Promise<void>
+  premierAdmin: (nom: string, email: string, mdp: string) => Promise<void>
   continuerSansCompte: (nom: string) => Promise<void>
-  changerNomAnonyme: (nom: string) => void
+  changerNomAnonyme: (nom: string) => Promise<void>
+  logout: () => Promise<void>
+  recharger: () => Promise<void>
 }
 
 const Ctx = createContext<AuthState | null>(null)
-const CLE_NOM = 'nomDeclarant'
+const CLE_PROFIL = 'br-profil'
 
-// Nom saisi à la création du compte (onAuthStateChanged arrive avant updateProfile)
-function nomInscription(): string {
-  try { return sessionStorage.getItem('nomInscription') ?? '' } catch { return '' }
-}
+interface Session { user: { id: string; nom: string; email: string | null; role: Role; actif: boolean } | null; configurationRequise: boolean }
 
-function nomLocal(): string {
-  try { return localStorage.getItem(CLE_NOM) ?? '' } catch { return '' }
+function versProfil(u: Session['user']): Utilisateur | null {
+  return u ? { uid: u.id, nom: u.nom, email: u.email ?? '', role: u.role, actif: u.actif } : null
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null)
   const [profil, setProfil] = useState<Utilisateur | null>(null)
   const [loading, setLoading] = useState(true)
+  const [configurationRequise, setConfig] = useState(false)
 
-  useEffect(() => {
-    let unsubProfil: (() => void) | undefined
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      unsubProfil?.()
-      unsubProfil = undefined
-      setFirebaseUser(u)
-      if (!u) {
-        setProfil(null)
-        setLoading(false)
-        return
+  const appliquer = (p: Utilisateur | null) => {
+    setProfil(p)
+    try { if (p) localStorage.setItem(CLE_PROFIL, JSON.stringify(p)); else localStorage.removeItem(CLE_PROFIL) } catch { /* rien */ }
+  }
+
+  const recharger = useCallback(async () => {
+    try {
+      const s = await get<Session>('/session')
+      appliquer(versProfil(s.user))
+      setConfig(s.configurationRequise)
+    } catch (e) {
+      // Hors ligne : on garde la dernière session connue pour pouvoir scanner quand même
+      if (e instanceof HorsLigne) {
+        try { const p = localStorage.getItem(CLE_PROFIL); if (p) setProfil(JSON.parse(p) as Utilisateur) } catch { /* rien */ }
       }
-      // Sans compte : identité = nom saisi sur le téléphone
-      if (u.isAnonymous) {
-        setProfil({ uid: u.uid, nom: nomLocal() || 'Anonyme', email: '', role: 'anonyme', actif: true })
-        setLoading(false)
-        return
-      }
-      const ref = doc(db, 'utilisateurs', u.uid)
-      try {
-        const snap = await getDoc(ref)
-        if (!snap.exists()) {
-          // Premier compte équipe : technicien, un admin pourra le promouvoir
-          await setDoc(ref, {
-            nom: u.displayName || nomInscription() || (u.email ? u.email.split('@')[0] : 'Utilisateur'),
-            email: u.email || '',
-            role: 'technicien',
-            actif: true,
-          })
-        }
-      } catch (e) {
-        console.error(e)
-      }
-      unsubProfil = onSnapshot(ref, (s) => {
-        setProfil(s.exists() ? ({ uid: u.uid, ...(s.data() as Omit<Utilisateur, 'uid'>) }) : null)
-        setLoading(false)
-      }, () => setLoading(false))
-    })
-    return () => {
-      unsub()
-      unsubProfil?.()
+    } finally {
+      setLoading(false)
     }
   }, [])
 
-  const continuerSansCompte = async (nom: string) => {
-    try { localStorage.setItem(CLE_NOM, nom) } catch { /* rien */ }
-    await signInAnonymously(auth)
-  }
-  const changerNomAnonyme = (nom: string) => {
-    try { localStorage.setItem(CLE_NOM, nom) } catch { /* rien */ }
-    setProfil((p) => (p && p.role === 'anonyme' ? { ...p, nom } : p))
+  useEffect(() => {
+    quandDeconnecte(() => { appliquer(null) })
+    void recharger()
+  }, [recharger])
+
+  const value: AuthState = {
+    profil, loading, configurationRequise, anonyme: profil?.role === 'anonyme',
+    connexion: async (email, mdp) => { await post('/auth/connexion', { email, mdp }); await recharger() },
+    premierAdmin: async (nom, email, mdp) => { await post('/auth/premier-admin', { nom, email, mdp }); await recharger() },
+    continuerSansCompte: async (nom) => {
+      try { localStorage.setItem('nomDeclarant', nom) } catch { /* rien */ }
+      await post('/auth/anonyme', { nom })
+      await recharger()
+    },
+    changerNomAnonyme: async (nom) => {
+      await patch('/moi', { nom })
+      try { localStorage.setItem('nomDeclarant', nom) } catch { /* rien */ }
+      await recharger()
+    },
+    logout: async () => {
+      await post('/auth/deconnexion').catch(() => {})
+      appliquer(null)
+    },
+    recharger,
   }
 
-  return (
-    <Ctx.Provider value={{
-      firebaseUser, profil, loading, anonyme: profil?.role === 'anonyme',
-      logout: () => signOut(auth), continuerSansCompte, changerNomAnonyme,
-    }}>
-      {children}
-    </Ctx.Provider>
-  )
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
 
 export function useAuth(): AuthState {

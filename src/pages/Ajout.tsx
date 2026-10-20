@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { addDoc, collection, doc, setDoc } from 'firebase/firestore'
-import { db } from '../firebase'
+import { messageErreur, post } from '../lib/api'
 import { creerMateriel, positionGps } from '../lib/actions'
 import { aLeRole, useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
@@ -83,23 +82,19 @@ export default function Ajout() {
     const n = quantiteMode ? 1 : Math.max(1, Math.min(500, parseInt(exemplaires) || 1))
     const depart = Math.max(1, parseInt(numeroDepart) || 1)
     const avecNumero = !quantiteMode && numeroter
-    const refs: string[] = []
     try {
-      setBusy('Création…')
+      setBusy(n > 1 ? `Création des ${n} pièces…` : 'Création…')
       const gps = await positionGps(4000)
-      for (let i = 0; i < n; i++) {
-        setBusy(n > 1 ? `Création ${i + 1} / ${n}…` : 'Création…')
-        refs.push(await creerMateriel({ user: profil, lieu }, {
-          categorie: cat, modele, nom: nom.trim() || cat.nom, valeurs: i === 0 ? valeurs : { ...valeurs, serie: '' },
-          quantite: quantiteMode ? Math.max(1, parseInt(quantite) || 1) : null, lieu, photo: i === 0 ? photo[0] ?? null : null,
-          numero: avecNumero ? depart + i : null, gps,
-        }))
-      }
+      const refs = await creerMateriel({ user: profil, lieu }, {
+        categorie: cat, modele, nom: nom.trim() || cat.nom, valeurs,
+        quantite: quantiteMode ? Math.max(1, parseInt(quantite) || 1) : null, lieu, photo: photo[0] ?? null,
+        exemplaires: n, numeroDepart: avecNumero ? depart : null, gps,
+      })
       toast(n > 1 ? `${n} matériels créés (${refs[0]} → ${refs[n - 1]})` : `${refs[0]} créé`)
       if (n > 1) nav(`/etiquettes?lieu=${lieu.id}&cat=${cat.id}${modele ? `&modele=${modele.id}` : ''}`)
       else nav(imprimer ? `/etiquettes?ref=${refs[0]}` : `/m/${refs[0]}`)
     } catch (e) {
-      toast(String(e).includes('hors-ligne') ? 'Pas de réseau : la création nécessite une connexion' : 'Erreur : ' + String(e), 'err')
+      toast(`Création impossible : ${messageErreur(e)}`, 'err')
     } finally { setBusy('') }
   }
 
@@ -174,7 +169,7 @@ export default function Ajout() {
               ) : (
                 <>
                   <label className="field">Nombre d'exemplaires à créer
-                    <input className="input" type="number" min={1} max={500} inputMode="numeric" value={exemplaires} onChange={(e) => setExemplaires(e.target.value)} />
+                    <input className="input" type="number" min={1} max={500} inputMode="numeric" aria-label="Nombre d'exemplaires à créer" value={exemplaires} onChange={(e) => setExemplaires(e.target.value)} />
                     <span className="muted small" style={{ fontWeight: 500 }}>Ex. : 195 dalles identiques → 195 fiches et 195 QR codes. Les n° de série se complètent ensuite sur chaque fiche.</span>
                   </label>
                   <div className="card stack-s" style={{ gap: 10, padding: 14 }}>
@@ -184,7 +179,7 @@ export default function Ajout() {
                     </label>
                     {numeroter && (
                       <label className="field">Premier numéro
-                        <input className="input" type="number" min={1} inputMode="numeric" value={numeroDepart} onChange={(e) => setNumeroDepart(e.target.value)} />
+                        <input className="input" type="number" min={1} inputMode="numeric" aria-label="Premier numéro" value={numeroDepart} onChange={(e) => setNumeroDepart(e.target.value)} />
                         <span className="muted small" style={{ fontWeight: 500 }}>
                           {(() => { const d = Math.max(1, parseInt(numeroDepart) || 1); const k = Math.max(1, parseInt(exemplaires) || 1); const p = (x: number) => String(x).padStart(3, '0'); return k > 1 ? `De ${p(d)} à ${p(d + k - 1)}` : `N° ${p(d)}` })()} · imprimé en gros sur l'étiquette
                         </span>
@@ -222,12 +217,13 @@ export default function Ajout() {
       )}
 
       {nouvelleCat && <NouvelleCategorie onClose={() => setNouvelleCat(false)} onCree={(id) => { setNouvelleCat(false); setCatId(id) }} nbExistantes={categories.length} />}
-      {nouveauModele && cat && <NouveauModele cat={cat} valeursInitiales={valeurs} onClose={() => setNouveauModele(false)} onCree={(id) => { setNouveauModele(false); setModeleId(id) }} />}
+      {nouveauModele && cat && <NouveauModele cat={cat} valeursInitiales={valeurs} onClose={() => setNouveauModele(false)} onCree={(id, v) => { setNouveauModele(false); setModeleId(id); setValeurs({ ...valeurs, ...v }); setNomTouche(false) }} />}
     </>
   )
 }
 
-function NouvelleCategorie({ onClose, onCree, nbExistantes }: { onClose: () => void; onCree: (id: string) => void; nbExistantes: number }) {
+function NouvelleCategorie({ onClose, onCree }: { onClose: () => void; onCree: (id: string) => void; nbExistantes?: number }) {
+  const { rafraichir } = useData()
   const [nom, setNom] = useState('')
   const [famille, setFamille] = useState('Divers')
   const [champs, setChamps] = useState('Modèle, N° de série')
@@ -237,10 +233,11 @@ function NouvelleCategorie({ onClose, onCree, nbExistantes }: { onClose: () => v
       <form className="stack" onSubmit={async (e) => {
         e.preventDefault()
         if (!nom.trim()) return
-        const id = `${slug(nom)}-${Date.now().toString(36)}`
         const liste = champs.split(',').map((s) => s.trim()).filter(Boolean).map((label) => ({ key: slug(label).replace(/-/g, '_') || 'champ', label, placeholder: '' }))
-        await setDoc(doc(db, 'categories', id), { nom: nom.trim(), famille, champs: liste, quantiteParDefaut: qte, ordre: nbExistantes + 1 })
-        toast('Catégorie créée'); onCree(id)
+        try {
+          const r = await post<{ id: string }>('/categories', { nom: nom.trim(), famille, champs: liste, quantiteParDefaut: qte })
+          await rafraichir(); toast('Catégorie créée'); onCree(r.id)
+        } catch (x) { toast(messageErreur(x), 'err') }
       }}>
         <label className="field">Nom<input className="input" autoFocus value={nom} onChange={(e) => setNom(e.target.value)} placeholder="Ex. : Pied de levage, Talkie-walkie…" /></label>
         <label className="field">Famille
@@ -255,7 +252,8 @@ function NouvelleCategorie({ onClose, onCree, nbExistantes }: { onClose: () => v
   )
 }
 
-function NouveauModele({ cat, valeursInitiales, onClose, onCree }: { cat: Categorie; valeursInitiales: Record<string, string>; onClose: () => void; onCree: (id: string) => void }) {
+function NouveauModele({ cat, valeursInitiales, onClose, onCree }: { cat: Categorie; valeursInitiales: Record<string, string>; onClose: () => void; onCree: (id: string, valeurs: Record<string, string>) => void }) {
+  const { rafraichir } = useData()
   const [nom, setNom] = useState('')
   const [v, setV] = useState<Record<string, string>>(() => { const x = { ...valeursInitiales }; delete x.serie; return x })
   const champs = cat.champs.filter((c) => c.key !== 'serie')
@@ -264,8 +262,10 @@ function NouveauModele({ cat, valeursInitiales, onClose, onCree }: { cat: Catego
       <form className="stack" onSubmit={async (e) => {
         e.preventDefault()
         if (!nom.trim()) return
-        const r = await addDoc(collection(db, 'modeles'), { categorieId: cat.id, nom: nom.trim(), valeurs: v })
-        toast('Modèle enregistré'); onCree(r.id)
+        try {
+          const r = await post<{ id: string }>('/modeles', { categorieId: cat.id, nom: nom.trim(), valeurs: v })
+          await rafraichir(); toast('Modèle enregistré'); onCree(r.id, v)
+        } catch (x) { toast(messageErreur(x), 'err') }
       }}>
         <label className="field">Nom du modèle<input className="input" autoFocus value={nom} onChange={(e) => setNom(e.target.value)} placeholder="Ex. : P3.91 outdoor 500 × 1000" /></label>
         {champs.map((c) => (

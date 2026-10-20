@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore'
-import { db } from '../firebase'
+import { get } from '../lib/api'
 import { LIBELLES_GRAVITE } from '../lib/actions'
 import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
@@ -52,11 +51,9 @@ export default function Tickets() {
 
   useEffect(() => {
     if (tab !== 'repare') return
-    return onSnapshot(
-      query(collection(db, 'tickets'), where('statut', '==', 'repare'), orderBy('repareLe', 'desc'), limit(30)),
-      (s) => setRepares(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Ticket)),
-      (e) => console.error(e),
-    )
+    let ok = true
+    get<Ticket[]>('/tickets?statut=repare').then((t) => { if (ok) setRepares(t) }).catch(() => {})
+    return () => { ok = false }
   }, [tab])
 
   const ouverts = ticketsActifs.filter((t) => t.statut === 'ouvert')
