@@ -2,9 +2,10 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { sql, type Sql } from './db'
 import {
-  chargerUtilisateur, estAdmin, estMembre, exiger, fermerSession, hasher, limiterConnexion,
-  ouvrirSession, verifier, type Env, type Utilisateur,
+  chargerUtilisateur, creerJeton, empreinte, estAdmin, estMembre, exiger, fermerSession, hasher, limiterConnexion,
+  ouvrirSession, verifier, type Env, type TypeJeton, type Utilisateur,
 } from './auth'
+import { APP_URL, envoyer, mailActif } from './mail'
 import { CATEGORIES_PAR_DEFAUT } from '../src/data/catalogue'
 
 const PREFIX = (process.env.REF_PREFIX || 'BR').toUpperCase()
@@ -94,6 +95,67 @@ async function ouvrirTicket(db: Sql, m: { ref: string; nom: string; statut: stri
   return numero
 }
 
+// ---------- emails ----------
+
+const DUREE_LIEN: Record<TypeJeton, number> = { invitation: 72, reinitialisation: 24 } // heures
+const ROLE_LIBELLE: Record<string, string> = { technicien: 'technicien', admin: 'administrateur' }
+
+// Crée un lien à usage unique et l'envoie ; renvoie false si l'email n'est pas parti
+async function envoyerLien(
+  u: { id: string; nom: string; email: string; role: string }, type: TypeJeton,
+  { heures = DUREE_LIEN[type], par }: { heures?: number; par?: string } = {},
+) {
+  const lien = `${APP_URL}/mdp/${await creerJeton(u.id, type, heures)}`
+  const duree = `${heures} heure${heures > 1 ? 's' : ''}`
+  if (type === 'invitation') {
+    return envoyer({
+      a: u.email, sujet: 'Ton accès à BR Inventaire', titre: `Bonjour ${u.nom}`,
+      paragraphes: [
+        `${par ?? 'Un administrateur'} t'a créé un compte ${ROLE_LIBELLE[u.role] ?? ''} sur BR Inventaire, l'application de suivi du matériel BR.`,
+        `Ton identifiant : ${u.email}`,
+        'Choisis ton mot de passe avec le bouton ci-dessous, tu arriveras directement dans l’application.',
+      ],
+      bouton: { texte: 'Choisir mon mot de passe', lien },
+      note: `Ce lien est personnel, ne sert qu'une fois et expire dans ${duree}. Passé ce délai, demande à un administrateur de t'en renvoyer un.`,
+    })
+  }
+  return envoyer({
+    a: u.email, sujet: 'Nouveau mot de passe BR Inventaire', titre: 'Nouveau mot de passe',
+    paragraphes: [`Bonjour ${u.nom},`, `${par ? `${par} t'envoie` : 'Voici'} un lien pour choisir un nouveau mot de passe pour ton compte BR Inventaire (${u.email}).`],
+    bouton: { texte: 'Choisir un nouveau mot de passe', lien },
+    note: `Ce lien ne sert qu'une fois et expire dans ${duree}. Si tu n'as rien demandé, ignore ce message : ton mot de passe actuel reste valable.`,
+  })
+}
+
+// Signalement sans compte : prévient les admins qu'il attend leur validation
+async function notifierSignalement(s: { ref: string; nom: string; lieu: string; gravite: string; description: string; declarant: string; photos: number }) {
+  if (!mailActif()) return
+  const admins = await sql`select email from utilisateurs where role = 'admin' and actif and email is not null`
+  await Promise.all(admins.map((a) => envoyer({
+    a: a.email, sujet: `Signalement à valider : ${s.nom} (${s.ref})`, titre: 'Nouveau signalement à valider',
+    paragraphes: [
+      `${s.declarant} (sans compte) a signalé un problème sur ${s.nom} (${s.ref}) à ${s.lieu}.`,
+      `Gravité : ${s.gravite}${s.photos ? ` · ${s.photos} photo${s.photos > 1 ? 's' : ''}` : ''}`,
+      `« ${s.description} »`,
+    ],
+    bouton: { texte: 'Voir les signalements à valider', lien: `${APP_URL}/validation` },
+    note: 'Tu reçois ce message parce que tu es administrateur de BR Inventaire.',
+  })))
+}
+
+// Lien reçu par email : encore valable, pas utilisé, compte d'équipe actif
+async function jetonValide(db: Sql, jeton: string, verrou = false) {
+  const invalide = err('Ce lien n’est plus valable (déjà utilisé ou expiré). Demande un nouveau lien.', 404)
+  if (!/^[\w-]{43}$/.test(jeton)) throw invalide
+  const [j] = await db`select j.empreinte, j.type, u.id, u.nom, u.email, u.actif
+    from jetons j join utilisateurs u on u.id = j.utilisateur_id
+    where j.empreinte = ${empreinte(jeton)} and j.utilise_le is null and j.expire_le > now() and u.role <> 'anonyme'
+    ${verrou ? db`for update of j` : db``}`
+  if (!j) throw invalide
+  if (!j.actif) throw new HTTPException(403, { message: 'Compte désactivé' })
+  return j as { empreinte: string; type: TypeJeton; id: string; nom: string; email: string }
+}
+
 export const api = new Hono<Env>()
 api.use('*', chargerUtilisateur)
 
@@ -107,7 +169,7 @@ api.onError((e, c) => {
 
 api.get('/session', async (c) => {
   const [{ n }] = await sql`select count(*)::int as n from utilisateurs where role = 'admin'`
-  return c.json({ user: c.get('user'), configurationRequise: n === 0 })
+  return c.json({ user: c.get('user'), configurationRequise: n === 0, mail: mailActif() })
 })
 
 // Premier lancement : création du compte administrateur
@@ -154,6 +216,43 @@ api.post('/auth/deconnexion', async (c) => {
   return c.json({ ok: true })
 })
 
+// Mot de passe oublié : même réponse que le compte existe ou non (on ne révèle pas qui a un compte)
+api.post('/auth/mdp-oublie', async (c) => {
+  limiterConnexion(c)
+  if (!mailActif()) throw err('L’envoi d’emails n’est pas configuré : demande à un administrateur de réinitialiser ton mot de passe')
+  const b = await c.req.json<Corps>()
+  const email = txt(b.email, 'Email', { requis: true, max: 200 }).toLowerCase()
+  void (async () => {
+    const [u] = await sql`select id, nom, email, role, mdp_hash from utilisateurs where email = ${email} and role <> 'anonyme' and actif`
+    // Compte jamais activé : on renvoie l'invitation plutôt qu'un lien de réinitialisation
+    if (u) await envoyerLien(u as never, u.mdpHash ? 'reinitialisation' : 'invitation', { heures: u.mdpHash ? 1 : undefined })
+  })().catch((e) => console.error('Mot de passe oublié :', e))
+  return c.json({ ok: true })
+})
+
+api.get('/auth/jeton/:jeton', async (c) => {
+  const j = await jetonValide(sql, c.req.param('jeton'))
+  return c.json({ nom: j.nom, email: j.email, type: j.type })
+})
+
+// Choix du mot de passe depuis le lien : le lien est consommé, les autres sessions sont fermées, on connecte la personne
+api.post('/auth/jeton/:jeton', async (c) => {
+  const b = await c.req.json<Corps>()
+  const mdp = txt(b.mdp, 'Mot de passe', { requis: true, max: 200 })
+  if (mdp.length < 8) throw err('Mot de passe : 8 caractères minimum')
+  const hash = await hasher(mdp)
+  const id = await sql.begin(async (tx) => {
+    const j = await jetonValide(tx as unknown as Sql, c.req.param('jeton'), true)
+    await tx`update utilisateurs set mdp_hash = ${hash} where id = ${j.id}`
+    await tx`update jetons set utilise_le = now() where empreinte = ${j.empreinte}`
+    await tx`delete from jetons where utilisateur_id = ${j.id} and utilise_le is null`
+    await tx`delete from sessions where utilisateur_id = ${j.id}`
+    return j.id
+  })
+  await ouvrirSession(c, id, 60)
+  return c.json({ ok: true })
+})
+
 api.patch('/moi', async (c) => {
   const u = exiger(c)
   const b = await c.req.json<Corps>()
@@ -165,6 +264,7 @@ api.patch('/moi', async (c) => {
     const mdp = txt(b.mdp, 'Mot de passe', { requis: true })
     if (mdp.length < 8) throw err('Mot de passe : 8 caractères minimum')
     await sql`update utilisateurs set mdp_hash = ${await hasher(mdp)} where id = ${u.id}`
+    await sql`delete from jetons where utilisateur_id = ${u.id} and utilise_le is null`
   }
   return c.json({ ok: true })
 })
@@ -368,6 +468,10 @@ api.post('/signalements', async (c) => {
     await journal(db, u, m, 'signalement', `Problème signalé (${gravite}) · ${numero}`, { lieuId: l.id, lieuNom: l.nom, gps: position, commentaire: description, photos: ph })
     return { numero, aValider: false }
   })
+  if (res.aValider) {
+    void notifierSignalement({ ref: m.ref, nom: m.nom, lieu: l.nom, gravite, description, declarant: u.nom, photos: ph.length })
+      .catch((e) => console.error('Notification signalement :', e))
+  }
   return c.json(res)
 })
 
@@ -569,21 +673,39 @@ api.post('/modeles', async (c) => {
 
 api.get('/utilisateurs', async (c) => {
   exiger(c, 'technicien')
-  return c.json(await sql`select id as uid, nom, email, role, actif from utilisateurs where role <> 'anonyme' order by nom`)
+  // enAttente : invitation envoyée, mot de passe pas encore choisi
+  return c.json(await sql`select id as uid, nom, email, role, actif, mdp_hash is null as en_attente from utilisateurs where role <> 'anonyme' order by nom`)
 })
 
+// Sans mot de passe : invitation par email (lien pour le choisir). Avec : mot de passe provisoire (secours sans SMTP)
 api.post('/utilisateurs', async (c) => {
-  exiger(c, 'admin')
+  const admin = exiger(c, 'admin')
   const b = await c.req.json<Corps>()
+  const nom = txt(b.nom, 'Nom', { requis: true, max: 80 })
   const email = txt(b.email, 'Email', { requis: true, max: 200 }).toLowerCase()
-  const mdp = txt(b.mdp, 'Mot de passe', { requis: true })
-  if (mdp.length < 8) throw err('Mot de passe : 8 caractères minimum')
+  const role = un(b.role ?? 'technicien', ['technicien', 'admin'] as const, 'Rôle')
+  const mdp = txt(b.mdp, 'Mot de passe', { max: 200 })
+  if (mdp && mdp.length < 8) throw err('Mot de passe : 8 caractères minimum')
+  if (!mdp && !mailActif()) throw err('L’envoi d’emails n’est pas configuré : indique un mot de passe provisoire')
   const [deja] = await sql`select 1 from utilisateurs where email = ${email}`
   if (deja) throw err('Un compte existe déjà avec cet email', 409)
-  await sql`insert into utilisateurs ${sql({
-    nom: txt(b.nom, 'Nom', { requis: true, max: 80 }), email, mdpHash: await hasher(mdp), role: un(b.role ?? 'technicien', ['technicien', 'admin'] as const, 'Rôle'),
-  })}`
-  return c.json({ ok: true })
+  const [u] = await sql`insert into utilisateurs ${sql({ nom, email, mdpHash: mdp ? await hasher(mdp) : null, role })} returning id, nom, email, role`
+  if (mdp) return c.json({ ok: true, invitation: false })
+  const envoye = await envoyerLien(u as never, 'invitation', { par: admin.nom })
+  return c.json({ ok: true, invitation: true, envoye })
+})
+
+// Renvoie l'invitation (compte pas encore activé) ou un lien pour choisir un nouveau mot de passe
+api.post('/utilisateurs/:id/lien', async (c) => {
+  const admin = exiger(c, 'admin')
+  if (!mailActif()) throw err('L’envoi d’emails n’est pas configuré')
+  const id = c.req.param('id')
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw err('Utilisateur introuvable', 404)
+  const [u] = await sql`select id, nom, email, role, mdp_hash from utilisateurs where id = ${id} and role <> 'anonyme' and actif and email is not null`
+  if (!u) throw err('Utilisateur introuvable ou désactivé', 404)
+  const type: TypeJeton = u.mdpHash ? 'reinitialisation' : 'invitation'
+  if (!(await envoyerLien(u as never, type, { par: admin.nom }))) throw new HTTPException(500, { message: 'L’email n’a pas pu partir (voir les journaux du serveur dans Coolify)' })
+  return c.json({ ok: true, type })
 })
 
 api.patch('/utilisateurs/:id', async (c) => {
@@ -602,7 +724,10 @@ api.patch('/utilisateurs/:id', async (c) => {
   if (!Object.keys(maj).length) return c.json({ ok: true })
   await sql.begin(async (tx) => {
     await tx`update utilisateurs set ${tx(maj)} where id = ${id} and role <> 'anonyme'`
-    if (maj.actif === false || maj.mdpHash) await tx`delete from sessions where utilisateur_id = ${id}`
+    if (maj.actif === false || maj.mdpHash) {
+      await tx`delete from sessions where utilisateur_id = ${id}`
+      await tx`delete from jetons where utilisateur_id = ${id} and utilise_le is null`
+    }
   })
   return c.json({ ok: true })
 })

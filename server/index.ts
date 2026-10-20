@@ -8,6 +8,7 @@ import { HTTPException } from 'hono/http-exception'
 import { api } from './api'
 import { chargerUtilisateur, exiger, type Env } from './auth'
 import { migrer } from './db'
+import { verifierSmtp } from './mail'
 
 const PORT = Number(process.env.PORT || 3000)
 const DATA = process.env.DATA_DIR || '/data'
@@ -78,6 +79,7 @@ async function demarrer() {
   await stat(path.join(STATIQUE, 'index.html')).catch(() => console.warn(`Attention : ${STATIQUE}/index.html introuvable`))
   await migrer()
   serve({ fetch: app.fetch, port: PORT }, () => console.log(`BR Inventaire en écoute sur le port ${PORT}`))
+  void verifierSmtp()
 }
 
 demarrer().catch((e) => {

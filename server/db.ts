@@ -34,6 +34,17 @@ create table if not exists sessions (
 );
 create index if not exists sessions_utilisateur on sessions(utilisateur_id);
 
+-- Liens envoyés par email (invitation, mot de passe oublié) : seule l'empreinte du jeton est stockée
+create table if not exists jetons (
+  empreinte text primary key,
+  utilisateur_id uuid not null references utilisateurs(id) on delete cascade,
+  type text not null check (type in ('invitation', 'reinitialisation')),
+  cree_le timestamptz not null default now(),
+  expire_le timestamptz not null,
+  utilise_le timestamptz
+);
+create index if not exists jetons_utilisateur on jetons(utilisateur_id);
+
 create table if not exists lieux (
   id uuid primary key default gen_random_uuid(),
   nom text not null,
@@ -176,4 +187,5 @@ export async function migrer() {
   await sql.unsafe(SCHEMA)
   // Sessions expirées
   await sql`delete from sessions where expire_le < now()`
+  await sql`delete from jetons where expire_le < now() - interval '30 days'`
 }

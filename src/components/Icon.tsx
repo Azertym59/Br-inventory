@@ -24,6 +24,7 @@ const PATHS: Record<string, string[]> = {
   logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'M16 17l5-5-5-5', 'M21 12H9'],
   wrench: ['M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z'],
   edit: ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z'],
+  mail: ['M3 6h18v12H3z', 'm3 7 9 6 9-6'],
 }
 
 export function Icon({ name, size = 22, stroke = 2, color }: { name: keyof typeof PATHS | string; size?: number; stroke?: number; color?: string }) {

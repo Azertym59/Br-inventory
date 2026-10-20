@@ -1,4 +1,4 @@
-import { randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
 import type { Context, MiddlewareHandler } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
@@ -61,6 +61,21 @@ export const chargerUtilisateur: MiddlewareHandler<Env> = async (c, next) => {
   }
   c.set('user', user)
   await next()
+}
+
+// ---------- liens à usage unique (invitation, mot de passe oublié) ----------
+
+export type TypeJeton = 'invitation' | 'reinitialisation'
+export const empreinte = (jeton: string) => createHash('sha256').update(jeton).digest('hex')
+
+// Un seul lien valable à la fois par personne : le nouveau remplace les précédents non utilisés
+export async function creerJeton(userId: string, type: TypeJeton, heures: number): Promise<string> {
+  const jeton = randomBytes(32).toString('base64url')
+  await sql.begin(async (tx) => {
+    await tx`delete from jetons where utilisateur_id = ${userId} and utilise_le is null`
+    await tx`insert into jetons ${tx({ empreinte: empreinte(jeton), utilisateurId: userId, type, expireLe: new Date(Date.now() + heures * 3600_000) })}`
+  })
+  return jeton
 }
 
 // ---------- droits ----------

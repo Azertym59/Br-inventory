@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './lib/auth'
 import { DataProvider } from './lib/data'
 import { Chargement, ToastHost } from './components/ui'
@@ -16,9 +16,13 @@ import Etiquettes from './pages/Etiquettes'
 import Ajout from './pages/Ajout'
 import Admin from './pages/Admin'
 import Validation from './pages/Validation'
+import NouveauMdp from './pages/NouveauMdp'
 
 function Routeur() {
   const { profil, loading, logout, anonyme } = useAuth()
+  const { pathname } = useLocation()
+  // Lien reçu par email : accessible sans être connecté (et même connecté sous un autre nom)
+  if (pathname.startsWith('/mdp/')) return <Routes><Route path="/mdp/:jeton" element={<NouveauMdp />} /></Routes>
   if (loading) return <Chargement />
   if (!profil) return <Login />
   if (!profil.actif) {

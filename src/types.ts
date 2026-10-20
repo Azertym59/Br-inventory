@@ -9,6 +9,8 @@ export interface Utilisateur {
   email: string
   role: Role
   actif: boolean
+  // Invitation envoyée, mot de passe pas encore choisi
+  enAttente?: boolean
 }
 
 export type TypeLieu = 'stade' | 'depot' | 'autre'

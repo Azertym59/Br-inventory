@@ -109,7 +109,7 @@ function Categories() {
 }
 
 function Equipe() {
-  const { profil } = useAuth()
+  const { profil, mail } = useAuth()
   const [users, setUsers] = useState<Utilisateur[]>([])
   const [nouveau, setNouveau] = useState(false)
   const [reset, setReset] = useState<Utilisateur | null>(null)
@@ -124,7 +124,7 @@ function Equipe() {
         {users.map((u) => (
           <div key={u.uid} className="list-item" style={{ cursor: 'default', flexWrap: 'wrap' }}>
             <div className="grow" style={{ minWidth: 160 }}>
-              <div style={{ fontWeight: 700 }}>{u.nom}{!u.actif && <span className="badge b-panne" style={{ marginLeft: 8 }}>désactivé</span>}</div>
+              <div style={{ fontWeight: 700 }}>{u.nom}{!u.actif && <span className="badge b-panne" style={{ marginLeft: 8 }}>désactivé</span>}{u.actif && u.enAttente && <span className="badge b-neutre" style={{ marginLeft: 8 }}>invitation en attente</span>}</div>
               <div className="muted small">{u.email}</div>
             </div>
             {u.uid === profil?.uid ? <span className="badge b-neutre">C'est toi</span> : (
@@ -144,9 +144,20 @@ function Equipe() {
       </div>
       {nouveau && <NouveauCompte onClose={() => setNouveau(false)} onCree={() => { setNouveau(false); charger() }} />}
       {reset && (
-        <Sheet titre={`Nouveau mot de passe · ${reset.nom}`} onClose={() => setReset(null)}>
+        <Sheet titre={`Mot de passe · ${reset.nom}`} onClose={() => setReset(null)}>
+          {mail && reset.actif && (
+            <div className="stack">
+              <button type="button" className="btn primary block" onClick={async () => {
+                if (await action(() => post(`/utilisateurs/${reset.uid}/lien`), `Email envoyé à ${reset.email}`)) setReset(null)
+              }}><Icon name="mail" />{reset.enAttente ? 'Renvoyer l’invitation' : 'Envoyer un lien par email'}</button>
+              <p className="muted small">{reset.enAttente
+                ? 'La personne reçoit un nouveau lien (valable 72 h) pour choisir son mot de passe. L’ancien lien ne marche plus.'
+                : 'La personne reçoit un lien (valable 24 h) pour choisir elle-même un nouveau mot de passe. Son mot de passe actuel reste valable tant qu’elle ne l’a pas changé.'}</p>
+              <div className="muted small" style={{ fontWeight: 700, marginTop: 8 }}>Ou, sans email : mot de passe provisoire</div>
+            </div>
+          )}
           <MotDePasse onValider={async (mdp) => {
-            if (await action(() => patch(`/utilisateurs/${reset.uid}`, { mdp }), 'Mot de passe changé')) setReset(null)
+            if (await action(() => patch(`/utilisateurs/${reset.uid}`, { mdp }), 'Mot de passe changé')) { setReset(null); charger() }
           }} />
           <p className="muted small">Communique-le à la personne : elle sera déconnectée de ses appareils et devra se reconnecter avec ce mot de passe.</p>
         </Sheet>
@@ -173,15 +184,30 @@ function MotDePasse({ onValider }: { onValider: (mdp: string) => void }) {
 }
 
 function NouveauCompte({ onClose, onCree }: { onClose: () => void; onCree: () => void }) {
+  const { mail } = useAuth()
   const [nom, setNom] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('technicien')
   const [mdp, setMdp] = useState(genererMdp)
+  // Avec l'envoi d'emails : invitation par défaut, mot de passe provisoire en secours
+  const [provisoire, setProvisoire] = useState(!mail)
+  const [busy, setBusy] = useState(false)
   return (
     <Sheet titre="Nouveau compte" onClose={onClose}>
       <form className="stack" onSubmit={async (e) => {
         e.preventDefault()
-        if (await action(() => post('/utilisateurs', { nom: nom.trim(), email: email.trim(), mdp, role }), 'Compte créé')) onCree()
+        setBusy(true)
+        try {
+          const r = await post<{ invitation: boolean; envoye?: boolean }>('/utilisateurs', { nom: nom.trim(), email: email.trim(), role, ...(provisoire ? { mdp } : {}) })
+          if (!r.invitation) toast('Compte créé')
+          else if (r.envoye) toast(`Invitation envoyée à ${email.trim()}`)
+          else toast('Compte créé, mais l’email n’est pas parti : réessaie avec « Mot de passe » → « Renvoyer l’invitation »', 'err')
+          onCree()
+        } catch (x) {
+          toast(messageErreur(x), 'err')
+        } finally {
+          setBusy(false)
+        }
       }}>
         <label className="field">Prénom et nom<input className="input" autoFocus value={nom} onChange={(e) => setNom(e.target.value)} required /></label>
         <label className="field">Email<input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
@@ -190,11 +216,23 @@ function NouveauCompte({ onClose, onCree }: { onClose: () => void; onCree: () =>
             <option value="technicien">Technicien</option><option value="admin">Admin</option>
           </select>
         </label>
-        <label className="field">Mot de passe provisoire
-          <input className="input mono" value={mdp} onChange={(e) => setMdp(e.target.value)} minLength={8} required />
-        </label>
-        <div className="note info">Envoie à la personne l'adresse de l'app, son email et ce mot de passe. Elle pourra le changer dans « Mon compte ».</div>
-        <button className="btn primary block">Créer le compte</button>
+        {mail && (
+          <label className="row" style={{ gap: 10, alignItems: 'center', fontWeight: 600 }}>
+            <input type="checkbox" checked={provisoire} onChange={(e) => setProvisoire(e.target.checked)} style={{ width: 20, height: 20 }} />
+            Définir un mot de passe provisoire à la place de l'email
+          </label>
+        )}
+        {provisoire ? (
+          <>
+            <label className="field">Mot de passe provisoire
+              <input className="input mono" value={mdp} onChange={(e) => setMdp(e.target.value)} minLength={8} required />
+            </label>
+            <div className="note info">Envoie à la personne l'adresse de l'app, son email et ce mot de passe. Elle pourra le changer dans « Mon compte ».{!mail && ' (L’envoi d’emails n’est pas configuré sur le serveur.)'}</div>
+          </>
+        ) : (
+          <div className="note info">La personne reçoit un email avec un lien (valable 72 h) pour choisir son mot de passe. Aucun mot de passe ne circule en clair.</div>
+        )}
+        <button className="btn primary block" disabled={busy}>{provisoire ? 'Créer le compte' : 'Créer et envoyer l’invitation'}</button>
       </form>
     </Sheet>
   )

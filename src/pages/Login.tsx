@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react'
-import { messageErreur } from '../lib/api'
+import { messageErreur, post } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Icon } from '../components/Icon'
 
 export default function Login() {
-  const { configurationRequise, connexion, premierAdmin, continuerSansCompte } = useAuth()
-  const [vue, setVue] = useState<'accueil' | 'equipe'>('accueil')
+  const { configurationRequise, mail, connexion, premierAdmin, continuerSansCompte } = useAuth()
+  const [vue, setVue] = useState<'accueil' | 'equipe' | 'oubli'>('accueil')
+  const [demandeEnvoyee, setDemandeEnvoyee] = useState(false)
   const [nomAnonyme, setNomAnonyme] = useState(() => { try { return localStorage.getItem('nomDeclarant') ?? '' } catch { return '' } })
   const [nom, setNom] = useState('')
   const [email, setEmail] = useState('')
@@ -54,7 +55,7 @@ export default function Login() {
 
   return (
     <div className="page" style={{ minHeight: '100dvh', justifyContent: 'center', paddingBottom: 40 }}>
-      {entete(vue === 'accueil' ? 'Bienvenue' : 'Connexion équipe')}
+      {entete(vue === 'accueil' ? 'Bienvenue' : vue === 'oubli' ? 'Mot de passe oublié' : 'Connexion équipe')}
 
       {vue === 'accueil' ? (
         <>
@@ -77,7 +78,7 @@ export default function Login() {
             <Icon name="user" size={20} />Je suis technicien ou admin
           </button>
         </>
-      ) : (
+      ) : vue === 'equipe' ? (
         <>
           <form className="stack" onSubmit={(e: FormEvent) => { e.preventDefault(); void lancer(() => connexion(email.trim(), mdp)) }}>
             <label className="field">Email
@@ -89,9 +90,40 @@ export default function Login() {
             {err && <div className="note err">{err}</div>}
             <button className="btn primary block" disabled={busy}>Se connecter</button>
           </form>
-          <p className="muted small" style={{ lineHeight: 1.5 }}>Pas de compte ou mot de passe oublié ? Demande à un administrateur : il crée les comptes et peut réinitialiser ton mot de passe.</p>
+          {mail ? (
+            <>
+              <button type="button" className="btn block" onClick={() => { setErr(''); setDemandeEnvoyee(false); setVue('oubli') }}>Mot de passe oublié ?</button>
+              <p className="muted small" style={{ lineHeight: 1.5 }}>Pas de compte ? Demande à un administrateur : il te crée un accès et tu reçois un email pour choisir ton mot de passe.</p>
+            </>
+          ) : (
+            <p className="muted small" style={{ lineHeight: 1.5 }}>Pas de compte ou mot de passe oublié ? Demande à un administrateur : il crée les comptes et peut réinitialiser ton mot de passe.</p>
+          )}
           <button type="button" className="btn small" style={{ border: 0, background: 'none' }} onClick={() => { setErr(''); setVue('accueil') }}>
             <Icon name="back" size={18} />Continuer sans compte
+          </button>
+        </>
+      ) : (
+        <>
+          {demandeEnvoyee ? (
+            <div className="note info" style={{ lineHeight: 1.5 }}>
+              Si un compte existe pour <strong>{email.trim()}</strong>, un email vient de partir avec un lien pour choisir un nouveau mot de passe (valable 1 heure).
+              Pense à regarder dans les courriers indésirables.
+            </div>
+          ) : (
+            <form className="stack" onSubmit={(e: FormEvent) => {
+              e.preventDefault()
+              void lancer(async () => { await post('/auth/mdp-oublie', { email: email.trim() }); setDemandeEnvoyee(true) })
+            }}>
+              <p className="muted">Indique l'email de ton compte : tu vas recevoir un lien pour choisir un nouveau mot de passe.</p>
+              <label className="field">Email
+                <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required autoFocus />
+              </label>
+              {err && <div className="note err">{err}</div>}
+              <button className="btn primary block" disabled={busy}>Recevoir le lien</button>
+            </form>
+          )}
+          <button type="button" className="btn small" style={{ border: 0, background: 'none' }} onClick={() => { setErr(''); setVue('equipe') }}>
+            <Icon name="back" size={18} />Retour à la connexion
           </button>
         </>
       )}

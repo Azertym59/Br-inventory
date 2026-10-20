@@ -6,6 +6,8 @@ interface AuthState {
   profil: Utilisateur | null
   loading: boolean
   configurationRequise: boolean
+  // Envoi d'emails configuré sur le serveur (invitations, mot de passe oublié)
+  mail: boolean
   anonyme: boolean
   connexion: (email: string, mdp: string) => Promise<void>
   premierAdmin: (nom: string, email: string, mdp: string) => Promise<void>
@@ -18,7 +20,7 @@ interface AuthState {
 const Ctx = createContext<AuthState | null>(null)
 const CLE_PROFIL = 'br-profil'
 
-interface Session { user: { id: string; nom: string; email: string | null; role: Role; actif: boolean } | null; configurationRequise: boolean }
+interface Session { user: { id: string; nom: string; email: string | null; role: Role; actif: boolean } | null; configurationRequise: boolean; mail?: boolean }
 
 function versProfil(u: Session['user']): Utilisateur | null {
   return u ? { uid: u.id, nom: u.nom, email: u.email ?? '', role: u.role, actif: u.actif } : null
@@ -28,6 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profil, setProfil] = useState<Utilisateur | null>(null)
   const [loading, setLoading] = useState(true)
   const [configurationRequise, setConfig] = useState(false)
+  const [mail, setMail] = useState(false)
 
   const appliquer = (p: Utilisateur | null) => {
     setProfil(p)
@@ -39,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const s = await get<Session>('/session')
       appliquer(versProfil(s.user))
       setConfig(s.configurationRequise)
+      setMail(s.mail === true)
     } catch (e) {
       // Hors ligne : on garde la dernière session connue pour pouvoir scanner quand même
       if (e instanceof HorsLigne) {
@@ -55,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [recharger])
 
   const value: AuthState = {
-    profil, loading, configurationRequise, anonyme: profil?.role === 'anonyme',
+    profil, loading, configurationRequise, mail, anonyme: profil?.role === 'anonyme',
     connexion: async (email, mdp) => { await post('/auth/connexion', { email, mdp }); await recharger() },
     premierAdmin: async (nom, email, mdp) => { await post('/auth/premier-admin', { nom, email, mdp }); await recharger() },
     continuerSansCompte: async (nom) => {
