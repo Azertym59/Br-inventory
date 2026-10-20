@@ -51,7 +51,13 @@ function couper(ctx: CanvasRenderingContext2D, texte: string, maxW: number, maxL
     }
   }
   if (cur && lignes.length < maxLignes) lignes.push(cur)
-  return lignes.slice(0, maxLignes)
+  const res = lignes.slice(0, maxLignes)
+  if (res.join(' ').split(/\s+/).length < mots.length && res.length) {
+    let der = res[res.length - 1]
+    while (der && ctx.measureText(der + '…').width > maxW) der = der.slice(0, -1)
+    res[res.length - 1] = der + '…'
+  }
+  return res
 }
 
 // Dessine l'étiquette (QR + référence + nom) en noir et blanc, à la taille réelle d'impression
@@ -101,8 +107,20 @@ export async function dessinerEtiquette(
       y += 26
     }
     if (sousTitre) {
-      ctx.font = `600 17px ${sans}`
-      ctx.fillText(couper(ctx, sousTitre, maxW, 1)[0] ?? '', x, H - marge - 18)
+      // Nom du lieu en entier : on réduit la police, puis on passe sur 2 lignes si besoin
+      let taille = 17
+      ctx.font = `600 ${taille}px ${sans}`
+      while (ctx.measureText(sousTitre).width > maxW && taille > 14) {
+        taille -= 1
+        ctx.font = `600 ${taille}px ${sans}`
+      }
+      const lignes = ctx.measureText(sousTitre).width <= maxW ? [sousTitre] : couper(ctx, sousTitre, maxW, 2)
+      const interligne = taille + 3
+      let yb = H - marge - taille - (lignes.length - 1) * interligne
+      for (const l of lignes) {
+        ctx.fillText(l, x, yb)
+        yb += interligne
+      }
     }
   }
   return c
