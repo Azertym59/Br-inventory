@@ -32,8 +32,7 @@ enregistrée avec **la personne, le lieu, la date et la position GPS** dans un h
 git clone https://github.com/Azertym59/br-inventory.git
 cd br-inventory
 npm install
-cp .env.example .env      # puis colle les valeurs firebaseConfig dans .env
-npm run dev               # http://localhost:5173
+npm run dev               # http://localhost:5173 (déjà branché sur le projet br-inventory)
 ```
 
 ## 3. Publier les règles de sécurité et mettre en ligne
@@ -41,7 +40,6 @@ npm run dev               # http://localhost:5173
 ```bash
 npm install -g firebase-tools
 firebase login
-firebase use --add                     # choisir ton projet
 firebase deploy --only firestore,storage   # règles + index
 npm run build
 firebase deploy --only hosting         # l'app est en ligne sur https://<projet>.web.app
