@@ -85,6 +85,9 @@ Connecté en admin, ⚙️ → **Administration** :
 - **Par lot** : filtre catégorie / modèle / lieu, puis plage « du n° X au n° Y » ; impression Bluetooth
   (Chrome Android / ordinateur) avec bouton Arrêter, ou export Excel pour l'appli Niimbot.
 - **À l'unité** : Bluetooth direct sur Android, partage d'image vers l'appli Niimbot sur iPhone.
+- **Étiquette** : QR code, logo BR, modèle (« Dalle ifix 8 »), numéro en gros (« Dalle 042 »), référence et lieu.
+  Avant d'imprimer : aperçu à l'échelle de la première étiquette et aperçu du lot (premières et dernière).
+  Le logo est vectorisé dans `src/lib/logo.ts` (aussi utilisé dans l'app et pour les icônes).
 - Le QR code contient `https://br.tecaled.fr/m/BR-00042` : scanné avec l'appareil photo, il ouvre la fiche.
 
 ## Hors ligne

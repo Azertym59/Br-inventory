@@ -31,6 +31,36 @@ function Apercu({ m, f }: { m: Materiel | null; f: FormatEtiquette }) {
   )
 }
 
+// Miniatures du lot (les 2 premières et la dernière) : on vérifie la suite des numéros avant d'imprimer
+function ApercuLot({ items, f }: { items: Materiel[]; f: FormatEtiquette }) {
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    let ok = true
+    const choix = items.length <= 3 ? items : [items[0], items[1], items[items.length - 1]]
+    Promise.all(choix.map((m) => dessinerEtiquette(m, f))).then((cs) => {
+      if (!ok || !box.current) return
+      const enfants: Node[] = []
+      cs.forEach((c, i) => {
+        if (i === 2 && items.length > 3) {
+          const ellipse = document.createElement('span')
+          ellipse.className = 'lot-ellipse'
+          ellipse.textContent = '…'
+          enfants.push(ellipse)
+        }
+        enfants.push(c)
+      })
+      box.current.replaceChildren(...enfants)
+    })
+    return () => { ok = false }
+  }, [items, f])
+  return (
+    <div className="stack-s" style={{ gap: 8 }}>
+      <div style={{ fontSize: 14, fontWeight: 700 }}>Aperçu du lot · {items.length} étiquettes</div>
+      <div ref={box} className="lot-apercu" />
+    </div>
+  )
+}
+
 export default function Etiquettes() {
   const [params] = useSearchParams()
   const { profil } = useAuth()
@@ -195,6 +225,7 @@ export default function Etiquettes() {
             </div>
 
             <Apercu m={premier ?? null} f={format} />
+            {lot.length > 1 && <ApercuLot items={lot} f={format} />}
 
             <div className="note info row between">
               <span>{lot.length ? <>Étiquettes à imprimer<br /><span className="small">{premier.numero != null ? libelleNumero(premier) : premier.ref}{lot.length > 1 ? ` → ${dernier.numero != null ? libelleNumero(dernier) : dernier.ref}` : ''}</span></> : 'Aucune étiquette'}</span>

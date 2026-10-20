@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { get, messageErreur, post } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Chargement, toast } from '../components/ui'
-import { Icon } from '../components/Icon'
+import { LogoBR } from '../components/LogoBR'
 
 interface Lien { nom: string; email: string; type: 'invitation' | 'reinitialisation' }
 
@@ -42,9 +42,7 @@ export default function NouveauMdp() {
 
   const entete = (titre: string) => (
     <div className="stack" style={{ gap: 6, alignItems: 'flex-start' }}>
-      <div className="icon-btn" style={{ background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff', width: 56, height: 56, borderRadius: 18 }}>
-        <Icon name="scan" size={30} stroke={2.2} />
-      </div>
+      <LogoBR hauteur={56} />
       <div className="eyebrow" style={{ marginTop: 12 }}>BR · Suivi matériel</div>
       <h1 className="h1">{titre}</h1>
     </div>

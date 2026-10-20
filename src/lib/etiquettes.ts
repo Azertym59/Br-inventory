@@ -2,6 +2,7 @@ import QRCode from 'qrcode'
 import writeXlsxFile from 'write-excel-file/browser'
 import type { Materiel } from '../types'
 import { urlMateriel } from './actions'
+import { dessinerLogo } from './logo'
 
 export interface FormatEtiquette {
   id: string
@@ -92,11 +93,46 @@ function ecrireBas(ctx: CanvasRenderingContext2D, texte: string, x: number, maxW
   }
 }
 
+// Le canvas dessine avec la police de secours si Inter n'est pas encore chargée :
+// on attend les polices de l'étiquette (une seule fois, 3 s max si le réseau est absent)
+let polices: Promise<unknown> | null = null
+function policesPretes() {
+  polices ??= Promise.race([
+    Promise.all(['700 19px Inter', '800 50px Inter', '600 17px Inter', '600 17px "JetBrains Mono"'].map((p) => document.fonts.load(p))),
+    new Promise((r) => setTimeout(r, 3000)),
+  ]).catch(() => {})
+  return polices
+}
+
+// QR code net : chaque module fait un nombre entier de points (la B1 imprime à 8 points/mm),
+// au plus proche de la taille visée
+async function qrCode(url: string, cibleMm: number): Promise<HTMLCanvasElement> {
+  const modules = QRCode.create(url, { errorCorrectionLevel: 'M' }).modules.size
+  const scale = Math.max(4, Math.round((cibleMm * PX_PAR_MM) / modules))
+  const qr = document.createElement('canvas')
+  await QRCode.toCanvas(qr, url, { margin: 0, scale, errorCorrectionLevel: 'M', color: { dark: '#000', light: '#fff' } })
+  return qr
+}
+
+// Titre à côté du logo : une ligne (police réduite si besoin), sinon deux
+function ecrireTitre(ctx: CanvasRenderingContext2D, texte: string, x: number, maxW: number, milieuY: number, sans: string) {
+  const t = ajusterTexte(ctx, texte, maxW, 21, '700', sans)
+  if (ctx.measureText(texte).width <= maxW && t >= 16) {
+    ctx.fillText(texte, x, Math.round(milieuY - t / 2))
+    return
+  }
+  ctx.font = `700 16px ${sans}`
+  const lignes = couper(ctx, texte, maxW, 2)
+  let y = Math.round(milieuY - (lignes.length * 18) / 2)
+  for (const l of lignes) { ctx.fillText(l, x, y); y += 18 }
+}
+
 // Dessine l'étiquette en noir et blanc, à la taille réelle d'impression.
 // maxW / maxH : limite de la tête d'impression (la B1 imprime 384 px = 48 mm de large)
 export async function dessinerEtiquette(
   m: Pick<Materiel, 'ref' | 'nom' | 'categorieNom' | 'modeleNom' | 'numero' | 'lieuNom'>, f: FormatEtiquette, maxW = Infinity, maxH = Infinity,
 ): Promise<HTMLCanvasElement> {
+  await policesPretes()
   const W = Math.min(f.largeurMm * PX_PAR_MM, maxW)
   const H = Math.min(f.hauteurMm * PX_PAR_MM, maxH)
   const c = document.createElement('canvas')
@@ -111,58 +147,64 @@ export async function dessinerEtiquette(
   const t = contenuEtiquette(m)
   const marge = 2 * PX_PAR_MM
   const carre = Math.abs(f.hauteurMm - f.largeurMm) < 6
-  // Le texte garde au moins ~45 % de la largeur (format 40 × 30)
-  const qrTaille = carre ? Math.round(H * 0.58) : Math.min(H - marge * 2, Math.round(W * 0.5))
-  const qr = document.createElement('canvas')
-  await QRCode.toCanvas(qr, urlMateriel(m.ref), { margin: 0, width: qrTaille, errorCorrectionLevel: 'M', color: { dark: '#000', light: '#fff' } })
   const mono = '"JetBrains Mono", ui-monospace, monospace'
   const sans = 'Inter, system-ui, sans-serif'
+  // Gros texte : « Dalle 042 », ou la référence pour le matériel sans numéro
+  const principal = t.grand ?? t.ref
+  const policePrincipal = t.grand ? sans : mono
+  // Logo BR en noir, lettres ajourées (impression thermique noir et blanc)
+  const logo = (x: number, y: number, h: number) => dessinerLogo(ctx, x, y, h, { fond: '#000', lettres: '#fff', marge: 0.3 })
 
   if (carre) {
-    ctx.drawImage(qr, Math.round((W - qrTaille) / 2), marge)
+    // En haut : logo + modèle ; au centre : QR ; en bas : numéro, référence, lieu
+    const hLogo = 6 * PX_PAR_MM
+    const wLogo = logo(marge, marge, hLogo)
+    ctx.fillStyle = '#000'
+    ctx.textAlign = 'left'
+    ecrireTitre(ctx, t.titre, marge + wLogo + 10, W - marge * 2 - wLogo - 10, marge + hLogo / 2, sans)
+    const qr = await qrCode(urlMateriel(m.ref), 25)
+    let y = marge + hLogo + 10
+    ctx.drawImage(qr, Math.round((W - qr.width) / 2), y)
+    y += qr.width + 6
     ctx.textAlign = 'center'
-    let y = marge + qrTaille + 6
-    const principal = t.grand ?? t.ref
-    const t1 = ajusterTexte(ctx, principal, W - marge * 2, 34, '800', t.grand ? sans : mono)
+    const t1 = ajusterTexte(ctx, principal, W - marge * 2, 42, '800', policePrincipal)
     ctx.fillText(principal, W / 2, y)
     y += t1 + 4
-    ajusterTexte(ctx, t.titre, W - marge * 2, 20, '700', sans)
-    ctx.fillText(couper(ctx, t.titre, W - marge * 2, 1)[0] ?? '', W / 2, y)
-    y += 24
     if (t.grand) {
-      ctx.font = `600 16px ${mono}`
+      ajusterTexte(ctx, t.ref, W - marge * 2, 16, '600', mono)
       ctx.fillText(t.ref, W / 2, y)
+      y += 20
+    }
+    if (t.sous && y + 16 <= H - marge) {
+      ajusterTexte(ctx, t.sous, W - marge * 2, 16, '600', sans)
+      ctx.fillText(t.sous, W / 2, y)
     }
     return c
   }
 
-  ctx.drawImage(qr, marge, Math.round((H - qrTaille) / 2))
+  // À gauche : QR et logo dessous ; à droite : modèle, numéro en gros, référence, lieu en bas
+  const qr = await qrCode(urlMateriel(m.ref), f.largeurMm >= 45 ? 19 : 15)
+  const hLogo = 5 * PX_PAR_MM
+  const hautQr = H - marge * 2 - hLogo - 8
+  ctx.drawImage(qr, marge, marge + Math.max(0, Math.round((hautQr - qr.height) / 2)))
+  logo(marge, H - marge - hLogo, hLogo)
+  ctx.fillStyle = '#000'
   ctx.textAlign = 'left'
-  const x = marge + qrTaille + 12
+  const x = marge + qr.width + 14
   const largeur = W - x - marge
   let y = marge + 2
+  ctx.font = `700 19px ${sans}`
+  for (const ligne of couper(ctx, t.titre, largeur, 2)) {
+    ctx.fillText(ligne, x, y)
+    y += 23
+  }
+  y += 4
+  const tg = ajusterTexte(ctx, principal, largeur, 52, '800', policePrincipal)
+  ctx.fillText(principal, x, y)
+  y += tg + 8
   if (t.grand) {
-    // 1) modèle (« Dalle ifix 8 »)  2) numéro en gros (« Dalle 042 »)  3) référence  4) lieu en bas
-    ctx.font = `700 19px ${sans}`
-    for (const ligne of couper(ctx, t.titre, largeur, 2)) {
-      ctx.fillText(ligne, x, y)
-      y += 23
-    }
-    y += 4
-    const tg = ajusterTexte(ctx, t.grand, largeur, 52, '800', sans)
-    ctx.fillText(t.grand, x, y)
-    y += tg + 8
     ajusterTexte(ctx, t.ref, largeur, 17, '600', mono)
     ctx.fillText(t.ref, x, y)
-  } else {
-    const t1 = ajusterTexte(ctx, t.ref, largeur, 34, '700', mono)
-    ctx.fillText(t.ref, x, y)
-    y += t1 + 10
-    ctx.font = `700 22px ${sans}`
-    for (const ligne of couper(ctx, t.titre, largeur, 3)) {
-      ctx.fillText(ligne, x, y)
-      y += 26
-    }
   }
   if (t.sous) ecrireBas(ctx, t.sous, x, largeur, H - marge, sans)
   return c

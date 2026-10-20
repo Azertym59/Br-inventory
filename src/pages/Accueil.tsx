@@ -5,6 +5,7 @@ import { aLeRole, useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { BottomNav, formatDate, LieuCourantPill } from '../components/ui'
 import { Icon } from '../components/Icon'
+import { LogoBR } from '../components/LogoBR'
 import type { Evenement, TypeEvenement } from '../types'
 
 const COULEUR_EVT: Record<TypeEvenement, string> = {
@@ -53,8 +54,11 @@ export default function Accueil() {
     <>
       <div className="page">
         <div className="row between">
-          <div className="stack-s" style={{ gap: 4 }}>
-            <div className="eyebrow">Bonjour {prenom}</div>
+          <div className="stack-s" style={{ gap: 6 }}>
+            <div className="row" style={{ gap: 10 }}>
+              <LogoBR hauteur={26} />
+              <div className="eyebrow">Bonjour {prenom}</div>
+            </div>
             <h1 className="h1">Tableau de bord</h1>
           </div>
           {anonyme ? (
