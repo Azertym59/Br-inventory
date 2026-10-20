@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore'
 import { db } from '../firebase'
 import { LIBELLES_GRAVITE } from '../lib/actions'
+import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { BottomNav, formatDate } from '../components/ui'
 import { Icon } from '../components/Icon'
@@ -42,7 +43,10 @@ export function CarteTicket({ t }: { t: Ticket }) {
 }
 
 export default function Tickets() {
-  const { ticketsActifs } = useData()
+  const { ticketsActifs: tous } = useData()
+  const { profil } = useAuth()
+  const [miens, setMiens] = useState(false)
+  const ticketsActifs = miens ? tous.filter((t) => t.assigneA?.uid === profil?.uid) : tous
   const [tab, setTab] = useState<StatutTicket>('ouvert')
   const [repares, setRepares] = useState<Ticket[]>([])
 
@@ -70,6 +74,12 @@ export default function Tickets() {
           <button type="button" role="tab" aria-selected={tab === 'en_cours'} onClick={() => setTab('en_cours')}>En cours · {enCours.length}</button>
           <button type="button" role="tab" aria-selected={tab === 'repare'} onClick={() => setTab('repare')}>Réparés</button>
         </div>
+        {tab !== 'repare' && (
+          <div className="chips">
+            <button type="button" className="chip" aria-selected={!miens} onClick={() => setMiens(false)}>Tous</button>
+            <button type="button" className="chip" aria-selected={miens} onClick={() => setMiens(true)}>Assignés à moi · {tous.filter((t) => t.assigneA?.uid === profil?.uid).length}</button>
+          </div>
+        )}
         <div className="stack">
           {tries.map((t) => <CarteTicket key={t.id} t={t} />)}
           {tries.length === 0 && <div className="card empty">Aucun ticket ici.</div>}

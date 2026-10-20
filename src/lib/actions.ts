@@ -4,7 +4,8 @@ import {
 } from 'firebase/firestore'
 import { db, REF_PREFIX } from '../firebase'
 import type {
-  Categorie, Gps, Gravite, Lieu, Materiel, Modele, Statut, Ticket, TypeEvenement, Utilisateur,
+  Categorie, Gps, Gravite, Lieu, Materiel, Modele, PropositionDeplacement, SignalementAValider, Statut, Ticket,
+  TypeEvenement, Utilisateur,
 } from '../types'
 import { envoyerPhotos } from './photos'
 
@@ -122,10 +123,14 @@ export async function creerMateriel(ctx: Contexte, n: NouveauMateriel): Promise<
   return ref
 }
 
-// Scan « présent ici » : si le matériel est trouvé ailleurs que prévu, il est déplacé automatiquement.
-export async function inventorier(ctx: Contexte, m: Materiel, lieu: Lieu, gps?: Gps | null): Promise<{ deplace: boolean }> {
+export const estAdmin = (ctx: Contexte) => ctx.user.role === 'admin'
+
+// Scan « présent ici ». Si le matériel est trouvé dans un autre parc :
+// un admin le déplace directement, sinon une proposition de déplacement part en validation.
+export async function inventorier(ctx: Contexte, m: Materiel, lieu: Lieu, gps?: Gps | null): Promise<{ deplace: boolean; propose: boolean }> {
   const position = gps === undefined ? await positionGps(4000) : gps
-  const deplace = m.lieuId !== lieu.id
+  const ailleurs = m.lieuId !== lieu.id
+  const deplace = ailleurs && estAdmin(ctx)
   const maj: Record<string, unknown> = {
     dernierInventaire: { uid: ctx.user.uid, nom: ctx.user.nom, lieuId: lieu.id, lieuNom: lieu.nom, date: serverTimestamp() },
   }
@@ -135,8 +140,43 @@ export async function inventorier(ctx: Contexte, m: Materiel, lieu: Lieu, gps?: 
   }
   await updateDoc(doc(db, 'materiel', m.ref), maj)
   if (deplace) await journal(ctx, m, 'deplacement', `Trouvé à ${lieu.nom} (était à ${m.lieuNom})`, { gps: position, lieu })
-  await journal(ctx, m, 'inventaire', 'Inventorié', { gps: position, lieu })
-  return { deplace }
+  if (ailleurs && !deplace) {
+    await addDoc(collection(db, 'propositions'), {
+      materielRef: m.ref, materielNom: m.nom, deLieuId: m.lieuId, deLieuNom: m.lieuNom,
+      versLieuId: lieu.id, versLieuNom: lieu.nom, par: { uid: ctx.user.uid, nom: ctx.user.nom },
+      statut: 'a_valider', creeLe: serverTimestamp(),
+    })
+  }
+  await journal(ctx, m, 'inventaire', ailleurs && !deplace ? `Inventorié à ${lieu.nom} (attendu à ${m.lieuNom})` : 'Inventorié', { gps: position, lieu })
+  return { deplace, propose: ailleurs && !deplace }
+}
+
+// Re-dispatch de plusieurs matériels vers un autre parc (admin)
+export async function deplacerLot(ctx: Contexte, items: Materiel[], vers: Lieu) {
+  for (let i = 0; i < items.length; i += 200) {
+    const batch = writeBatch(db)
+    for (const m of items.slice(i, i + 200)) {
+      if (m.lieuId === vers.id) continue
+      batch.update(doc(db, 'materiel', m.ref), { lieuId: vers.id, lieuNom: vers.nom })
+      batch.set(doc(collection(db, 'evenements')), {
+        materielRef: m.ref, materielNom: m.nom, type: 'deplacement', titre: `Re-dispatch : ${m.lieuNom} → ${vers.nom}`,
+        userId: ctx.user.uid, userNom: ctx.user.nom, lieuId: vers.id, lieuNom: vers.nom,
+        gps: null, commentaire: null, photos: [], date: serverTimestamp(),
+      })
+    }
+    await batch.commit()
+  }
+}
+
+export async function traiterProposition(ctx: Contexte, p: PropositionDeplacement, accepter: boolean, materiel: Materiel | undefined) {
+  if (accepter && materiel && materiel.lieuId !== p.versLieuId) {
+    await updateDoc(doc(db, 'materiel', p.materielRef), { lieuId: p.versLieuId, lieuNom: p.versLieuNom })
+    await journal(ctx, materiel, 'deplacement', `Déplacement validé : ${materiel.lieuNom} → ${p.versLieuNom} (signalé par ${p.par.nom})`,
+      { lieu: { id: p.versLieuId, nom: p.versLieuNom, type: 'autre', actif: true } })
+  }
+  await updateDoc(doc(db, 'propositions', p.id), {
+    statut: accepter ? 'valide' : 'rejete', traitePar: { uid: ctx.user.uid, nom: ctx.user.nom }, traiteLe: serverTimestamp(),
+  })
 }
 
 export async function deplacer(ctx: Contexte, m: Materiel, vers: Lieu, commentaire?: string) {
@@ -175,52 +215,84 @@ export async function marquerEtiquetes(ctx: Contexte, items: Materiel[]) {
 const STATUT_SELON_GRAVITE: Record<Gravite, Statut> = { faible: 'surveiller', moyenne: 'surveiller', critique: 'panne' }
 const RANG_STATUT: Record<Statut, number> = { ok: 0, surveiller: 1, reparation: 2, panne: 3, hs: 4 }
 
+async function numeroTicket(): Promise<string> {
+  try {
+    return `T-${String(await prochainNumero('tickets')).padStart(4, '0')}`
+  } catch {
+    return `T-${Date.now().toString(36).toUpperCase()}`
+  }
+}
+
+async function ouvrirTicket(
+  m: Pick<Materiel, 'ref' | 'nom' | 'statut'>,
+  t: { lieuId: string; lieuNom: string; description: string; gravite: Gravite; photos: string[]; gps: Gps | null;
+    signalePar: Ticket['signalePar']; validePar: Ticket['validePar'] },
+): Promise<string> {
+  const numero = await numeroTicket()
+  await addDoc(collection(db, 'tickets'), {
+    numero, materielRef: m.ref, materielNom: m.nom, ...t,
+    statut: 'ouvert', assigneA: null, photosApres: [], commentaireReparation: null,
+    creeLe: serverTimestamp(), majLe: serverTimestamp(), repareLe: null,
+  })
+  const nouveau = STATUT_SELON_GRAVITE[t.gravite]
+  await updateDoc(doc(db, 'materiel', m.ref), {
+    ticketsOuverts: increment(1),
+    ...(RANG_STATUT[nouveau] > RANG_STATUT[m.statut] ? { statut: nouveau } : {}),
+  })
+  return numero
+}
+
+// Signalement : un membre de l'équipe ouvre directement un ticket ;
+// sans compte, le signalement attend la validation d'un admin.
 export async function signaler(
   ctx: Contexte, m: Materiel,
   s: { description: string; gravite: Gravite; photos: File[] },
-): Promise<string> {
+): Promise<{ numero: string | null; aValider: boolean }> {
   const lieu = ctx.lieu ?? { id: m.lieuId, nom: m.lieuNom, type: 'autre' as const, actif: true }
   const [gps, photos] = await Promise.all([
     positionGps(5000),
     s.photos.length ? envoyerPhotos(s.photos, `tickets/${m.ref}`) : Promise.resolve([] as string[]),
   ])
-  let numero: string
-  try {
-    numero = `T-${String(await prochainNumero('tickets')).padStart(4, '0')}`
-  } catch {
-    numero = `T-${Date.now().toString(36).toUpperCase()}`
+  if (ctx.user.role === 'anonyme') {
+    await addDoc(collection(db, 'signalements'), {
+      materielRef: m.ref, materielNom: m.nom, lieuId: lieu.id, lieuNom: lieu.nom,
+      description: s.description, gravite: s.gravite, photos, gps,
+      declarant: { uid: ctx.user.uid, nom: ctx.user.nom }, statut: 'a_valider', creeLe: serverTimestamp(),
+    })
+    await journal(ctx, m, 'signalement', `Problème signalé (${s.gravite}), en attente de validation`, { gps, commentaire: s.description, photos, lieu })
+    return { numero: null, aValider: true }
   }
-  const ticket: Omit<Ticket, 'id' | 'creeLe' | 'majLe' | 'repareLe'> = {
-    numero,
-    materielRef: m.ref,
-    materielNom: m.nom,
-    lieuId: lieu.id,
-    lieuNom: lieu.nom,
-    description: s.description,
-    gravite: s.gravite,
-    statut: 'ouvert',
-    signalePar: { uid: ctx.user.uid, nom: ctx.user.nom },
-    assigneA: null,
-    photos,
-    photosApres: [],
-    gps,
-    commentaireReparation: null,
+  const numero = await ouvrirTicket(m, {
+    lieuId: lieu.id, lieuNom: lieu.nom, description: s.description, gravite: s.gravite, photos, gps,
+    signalePar: { uid: ctx.user.uid, nom: ctx.user.nom }, validePar: null,
+  })
+  await journal(ctx, m, 'signalement', `Problème signalé (${s.gravite}) · ${numero}`, { gps, commentaire: s.description, photos, lieu })
+  return { numero, aValider: false }
+}
+
+export async function traiterSignalement(ctx: Contexte, s: SignalementAValider, accepter: boolean, materiel: Materiel | undefined, gravite?: Gravite) {
+  let numero: string | null = null
+  if (accepter && materiel) {
+    numero = await ouvrirTicket(materiel, {
+      lieuId: s.lieuId, lieuNom: s.lieuNom, description: s.description, gravite: gravite ?? s.gravite, photos: s.photos, gps: s.gps,
+      signalePar: { uid: s.declarant.uid, nom: s.declarant.nom, anonyme: true },
+      validePar: { uid: ctx.user.uid, nom: ctx.user.nom },
+    })
+    await journal(ctx, materiel, 'statut', `Signalement de ${s.declarant.nom} validé · ${numero}`)
   }
-  await addDoc(collection(db, 'tickets'), { ...ticket, creeLe: serverTimestamp(), majLe: serverTimestamp(), repareLe: null })
-  const nouveau = STATUT_SELON_GRAVITE[s.gravite]
-  await updateDoc(doc(db, 'materiel', m.ref), {
-    ticketsOuverts: increment(1),
-    ...(RANG_STATUT[nouveau] > RANG_STATUT[m.statut] ? { statut: nouveau } : {}),
+  await updateDoc(doc(db, 'signalements', s.id), {
+    statut: accepter ? 'valide' : 'rejete', ticket: numero, traitePar: { uid: ctx.user.uid, nom: ctx.user.nom }, traiteLe: serverTimestamp(),
   })
-  await journal(ctx, m, 'signalement', `Problème signalé (${s.gravite}) · ${numero}`, {
-    gps, commentaire: s.description, photos, lieu,
-  })
-  return numero
+}
+
+export async function assignerTicket(ctx: Contexte, t: Ticket, a: { uid: string; nom: string } | null) {
+  await updateDoc(doc(db, 'tickets', t.id), { assigneA: a, majLe: serverTimestamp() })
+  await journal(ctx, { ref: t.materielRef, nom: t.materielNom }, 'statut', a ? `${t.numero} assigné à ${a.nom}` : `${t.numero} désassigné`)
 }
 
 export async function prendreEnCharge(ctx: Contexte, t: Ticket) {
   await updateDoc(doc(db, 'tickets', t.id), {
-    statut: 'en_cours', assigneA: { uid: ctx.user.uid, nom: ctx.user.nom }, majLe: serverTimestamp(),
+    statut: 'en_cours', assigneA: t.assigneA ?? { uid: ctx.user.uid, nom: ctx.user.nom }, majLe: serverTimestamp(),
   })
   await updateDoc(doc(db, 'materiel', t.materielRef), { statut: 'reparation' })
   await journal(ctx, { ref: t.materielRef, nom: t.materielNom }, 'statut', `${t.numero} pris en charge`)

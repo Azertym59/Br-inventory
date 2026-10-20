@@ -16,7 +16,8 @@ const COULEUR: Record<TypeEvenement, string> = {
 
 export default function Fiche() {
   const { ref = '' } = useParams()
-  const { profil } = useAuth()
+  const { profil, anonyme } = useAuth()
+  const admin = profil?.role === 'admin'
   const { materiel, categories, lieuCourant, lieux, ticketsActifs, pret } = useData()
   const m = materiel.find((x) => x.ref === ref)
   const [histo, setHisto] = useState<Evenement[]>([])
@@ -26,11 +27,14 @@ export default function Fiche() {
   const [nomEdit, setNomEdit] = useState('')
   const [qteEdit, setQteEdit] = useState('')
 
-  useEffect(() => onSnapshot(
-    query(collection(db, 'evenements'), where('materielRef', '==', ref), orderBy('date', 'desc'), limit(40)),
-    (s) => setHisto(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Evenement)),
-    (e) => console.error(e),
-  ), [ref])
+  useEffect(() => {
+    if (anonyme) return
+    return onSnapshot(
+      query(collection(db, 'evenements'), where('materielRef', '==', ref), orderBy('date', 'desc'), limit(40)),
+      (s) => setHisto(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Evenement)),
+      (e) => console.error(e),
+    )
+  }, [ref, anonyme])
 
   if (!m) {
     return (
@@ -51,8 +55,8 @@ export default function Fiche() {
     if (!lieu) { setSheet('lieu-inv'); return }
     setBusy(true)
     try {
-      const { deplace } = await inventorier({ ...ctx, lieu }, m, lieu)
-      toast(deplace ? `Inventorié · déplacé vers ${lieu.nom}` : 'Inventorié ✓')
+      const { deplace, propose } = await inventorier({ ...ctx, lieu }, m, lieu)
+      toast(deplace ? `Inventorié · déplacé vers ${lieu.nom}` : propose ? `Inventorié · déplacement vers ${lieu.nom} proposé aux admins` : 'Inventorié ✓')
     } catch (e) { toast('Erreur : ' + String(e), 'err') } finally { setBusy(false) }
   }
 
@@ -74,7 +78,7 @@ export default function Fiche() {
       <div className="row between">
         <BackButton />
         <span className="ref" style={{ fontSize: 14, padding: '8px 12px', borderRadius: 10, background: 'var(--accent-tint)', border: '1px solid var(--accent-border)' }}>{m.ref}</span>
-        <Link to={`/etiquettes?ref=${encodeURIComponent(m.ref)}`} className="icon-btn" aria-label="Imprimer l'étiquette"><Icon name="printer" size={20} /></Link>
+        {anonyme ? <span style={{ width: 44 }} /> : <Link to={`/etiquettes?ref=${encodeURIComponent(m.ref)}`} className="icon-btn" aria-label="Imprimer l'étiquette"><Icon name="printer" size={20} /></Link>}
       </div>
 
       {m.photoUrl && <div className="card flush" style={{ height: 180 }}><img src={m.photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>}
@@ -98,8 +102,8 @@ export default function Fiche() {
         <button type="button" className="btn tall success" disabled={busy} onClick={() => presentIci()}>
           <Icon name="check" stroke={2.4} />{lieuCourant ? `Présent à ${lieuCourant.nom}` : 'Inventorié ici'}</button>
         <Link to={`/m/${encodeURIComponent(m.ref)}/signaler`} className="btn tall danger"><Icon name="alert" stroke={2.4} />Signaler un problème</Link>
-        <button type="button" className="btn tall" onClick={() => setSheet('deplacer')}><Icon name="move" color="#1D4ED8" />Déplacer</button>
-        <button type="button" className="btn tall" onClick={() => setSheet('statut')}><Icon name="wrench" color="#1D4ED8" />Changer le statut</button>
+        {admin && <button type="button" className="btn tall" onClick={() => setSheet('deplacer')}><Icon name="move" color="#1D4ED8" />Déplacer vers un autre parc</button>}
+        {!anonyme && <button type="button" className="btn tall" onClick={() => setSheet('statut')}><Icon name="wrench" color="#1D4ED8" />Changer le statut</button>}
       </div>
 
       {tickets.length > 0 && (
@@ -123,9 +127,9 @@ export default function Fiche() {
           </div>
         ))}
       </div>
-      <button type="button" className="btn small" onClick={ouvrirModif}><Icon name="edit" size={18} />Modifier la fiche</button>
+      {!anonyme && <button type="button" className="btn small" onClick={ouvrirModif}><Icon name="edit" size={18} />Modifier la fiche</button>}
 
-      <div className="stack">
+      {!anonyme && <div className="stack">
         <h2 className="h2">Historique</h2>
         <div className="tl">
           {histo.map((e) => (
@@ -142,7 +146,7 @@ export default function Fiche() {
           ))}
           {histo.length === 0 && <div className="muted">Aucun événement.</div>}
         </div>
-      </div>
+      </div>}
 
       {sheet === 'lieu-inv' && <LieuPicker titre="Où se trouve ce matériel ?" onClose={() => setSheet(null)} onPick={(id) => presentIci(id)} />}
       {sheet === 'deplacer' && <LieuPicker titre="Déplacer vers…" onClose={() => setSheet(null)} onPick={async (id) => {

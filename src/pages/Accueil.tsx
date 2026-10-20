@@ -14,14 +14,19 @@ const COULEUR_EVT: Record<TypeEvenement, string> = {
 }
 
 export default function Accueil() {
-  const { profil } = useAuth()
-  const { materiel, lieux, ticketsActifs, pret } = useData()
+  const { profil, anonyme, logout, changerNomAnonyme } = useAuth()
+  const { materiel, lieux, ticketsActifs, pret, signalementsAValider, propositionsAValider } = useData()
   const [evts, setEvts] = useState<Evenement[]>([])
+  const aValider = signalementsAValider.length + propositionsAValider.length
 
-  useEffect(() => onSnapshot(
-    query(collection(db, 'evenements'), orderBy('date', 'desc'), limit(8)),
-    (s) => setEvts(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Evenement)),
-  ), [])
+  useEffect(() => {
+    if (anonyme) return
+    return onSnapshot(
+      query(collection(db, 'evenements'), orderBy('date', 'desc'), limit(8)),
+      (s) => setEvts(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Evenement)),
+      (e) => console.error(e),
+    )
+  }, [anonyme])
 
   const stats = useMemo(() => {
     const parLieu = new Map<string, { nb: number; tickets: number }>()
@@ -55,11 +60,31 @@ export default function Accueil() {
             <div className="eyebrow">Bonjour {prenom}</div>
             <h1 className="h1">Tableau de bord</h1>
           </div>
-          <div className="row" style={{ gap: 8 }}>
-            <Link to="/ajout" className="icon-btn dark" aria-label="Ajouter un matériel"><Icon name="plus" stroke={2.6} /></Link>
-            <Link to="/admin" className="icon-btn" aria-label="Réglages et compte"><Icon name="settings" size={20} /></Link>
-          </div>
+          {anonyme ? (
+            <button type="button" className="btn small" onClick={logout}><Icon name="user" size={18} />Équipe</button>
+          ) : (
+            <div className="row" style={{ gap: 8 }}>
+              <Link to="/ajout" className="icon-btn dark" aria-label="Ajouter un matériel"><Icon name="plus" stroke={2.6} /></Link>
+              <Link to="/admin" className="icon-btn" aria-label="Réglages et compte"><Icon name="settings" size={20} /></Link>
+            </div>
+          )}
         </div>
+
+        {anonyme && (
+          <div className="note info row between" style={{ gap: 10 }}>
+            <span>Tes actions sont enregistrées au nom de <strong>{profil?.nom}</strong>.</span>
+            <button type="button" className="btn small" onClick={() => { const n = prompt('Ton prénom et nom', profil?.nom ?? ''); if (n && n.trim().length > 1) changerNomAnonyme(n.trim()) }}>Modifier</button>
+          </div>
+        )}
+
+        {aValider > 0 && (
+          <Link to="/validation" className="card row" style={{ background: 'var(--amber-tint)', borderColor: 'var(--amber-border)', textDecoration: 'none', color: 'var(--amber-ink)' }}>
+            <div className="tile" style={{ background: '#FEF3C7', color: 'var(--amber)' }}><Icon name="alert" /></div>
+            <div className="grow"><div style={{ fontWeight: 800 }}>{aValider} élément(s) à valider</div>
+              <div className="small" style={{ fontWeight: 600 }}>{signalementsAValider.length} signalement(s) · {propositionsAValider.length} déplacement(s)</div></div>
+            <Icon name="chevron" />
+          </Link>
+        )}
 
         <LieuCourantPill />
 
@@ -74,7 +99,7 @@ export default function Accueil() {
           <Icon name="chevron" stroke={2.5} />
         </Link>
 
-        <div className="grid-2">
+        {!anonyme && <div className="grid-2">
           <Link to="/lieux" className="card kpi"><div className="lbl">Matériel suivi</div><div className="val">{materiel.length}</div>
             <div className="small" style={{ color: 'var(--green)', fontWeight: 700 }}>+{stats.ceMois} ce mois</div></Link>
           <Link to="/tickets" className={`card kpi ${ticketsActifs.length ? 'red' : ''}`}><div className="lbl">Tickets ouverts</div><div className="val">{ticketsActifs.length}</div>
@@ -83,12 +108,12 @@ export default function Accueil() {
             <div className="small lbl" style={{ fontWeight: 700 }}>à réparer</div></Link>
           <Link to="/etiquettes" className="card kpi"><div className="lbl">À étiqueter</div><div className="val">{stats.aEtiqueter}</div>
             <div className="small" style={{ color: 'var(--accent-ink)', fontWeight: 700 }}>Imprimer le lot</div></Link>
-        </div>
+        </div>}
 
         <div className="stack">
           <div className="row between"><h2 className="h2">Par lieu</h2><Link to="/lieux" className="small" style={{ fontWeight: 700, textDecoration: 'none' }}>Tout voir</Link></div>
           <div className="card flush">
-            {pret && lieux.length === 0 && <div className="empty">Aucun lieu pour l'instant. {aLeRole(profil, 'responsable') ? <Link to="/admin">Créer les lieux</Link> : 'Un responsable doit les créer.'}</div>}
+            {pret && lieux.length === 0 && <div className="empty">Aucun lieu pour l'instant. {aLeRole(profil, 'admin') ? <Link to="/admin">Créer les lieux</Link> : 'Un admin doit les créer.'}</div>}
             {lieux.map((l) => {
               const s = stats.parLieu.get(l.id)
               return (
@@ -102,7 +127,7 @@ export default function Accueil() {
           </div>
         </div>
 
-        <div className="stack">
+        {!anonyme && <div className="stack">
           <h2 className="h2">Activité récente</h2>
           {evts.length === 0 && <div className="card empty">Rien pour l'instant : scanne ton premier matériel.</div>}
           {evts.map((e) => (
@@ -115,7 +140,7 @@ export default function Accueil() {
               </div>
             </Link>
           ))}
-        </div>
+        </div>}
       </div>
       <BottomNav />
     </>

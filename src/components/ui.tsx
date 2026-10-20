@@ -2,11 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import type { Timestamp } from 'firebase/firestore'
 import { LIBELLES_STATUT } from '../lib/actions'
+import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import type { Statut } from '../types'
 import { Icon } from './Icon'
 
 export function BottomNav() {
+  const { anonyme } = useAuth()
   const cls = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : '')
   return (
     <nav className="bottom-nav" aria-label="Navigation principale">
@@ -14,8 +16,12 @@ export function BottomNav() {
         <NavLink to="/" end className={cls}><Icon name="home" size={24} />Accueil</NavLink>
         <NavLink to="/lieux" className={cls}><Icon name="pin" size={24} />Lieux</NavLink>
         <Link to="/scan" className="scan" aria-label="Scanner"><Icon name="scan" size={28} stroke={2.2} /></Link>
-        <NavLink to="/tickets" className={cls}><Icon name="alert" size={24} />Tickets</NavLink>
-        <NavLink to="/etiquettes" className={cls}><Icon name="printer" size={24} />Étiquettes</NavLink>
+        {anonyme ? <>
+          <span style={{ width: 64 }} /><span style={{ width: 64 }} />
+        </> : <>
+          <NavLink to="/tickets" className={cls}><Icon name="alert" size={24} />Tickets</NavLink>
+          <NavLink to="/etiquettes" className={cls}><Icon name="printer" size={24} />Étiquettes</NavLink>
+        </>}
       </div>
     </nav>
   )
@@ -74,7 +80,7 @@ export function LieuPicker({ onClose, onPick, titre = 'Où êtes-vous ?' }: { on
   return (
     <Sheet onClose={onClose} titre={titre}>
       <div className="card flush">
-        {lieux.length === 0 && <div className="empty">Aucun lieu. Un responsable doit en créer dans Administration.</div>}
+        {lieux.length === 0 && <div className="empty">Aucun lieu. Un admin doit en créer dans Administration.</div>}
         {lieux.map((l) => (
           <button key={l.id} type="button" className="list-item" onClick={() => { if (onPick) onPick(l.id); else choisirLieu(l.id); onClose() }}>
             <div className="tile">{l.nom.slice(0, 3).toUpperCase()}</div>

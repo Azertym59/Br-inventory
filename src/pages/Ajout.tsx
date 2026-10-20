@@ -18,7 +18,7 @@ export default function Ajout() {
   const nav = useNavigate()
   const { profil } = useAuth()
   const { categories, modeles, lieux, lieuCourant } = useData()
-  const responsable = aLeRole(profil, 'responsable')
+  const responsable = aLeRole(profil, 'admin')
   const [catId, setCatId] = useState<string>('')
   const [modeleId, setModeleId] = useState<string | null>(null)
   const [quantiteMode, setQuantiteMode] = useState(false)
@@ -113,7 +113,7 @@ export default function Ajout() {
             </div>
           ))}
           <button type="button" className="btn" style={{ borderStyle: 'dashed', borderWidth: 2, color: 'var(--accent-ink)' }}
-            onClick={() => responsable ? setNouvelleCat(true) : toast('Seul un responsable peut créer une catégorie', 'info')}>
+            onClick={() => responsable ? setNouvelleCat(true) : toast('Seul un admin peut créer une catégorie', 'info')}>
             <Icon name="plus" stroke={2.6} size={18} />Autre : créer une catégorie
           </button>
         </div>

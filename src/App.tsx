@@ -16,9 +16,10 @@ import Inventaire from './pages/Inventaire'
 import Etiquettes from './pages/Etiquettes'
 import Ajout from './pages/Ajout'
 import Admin from './pages/Admin'
+import Validation from './pages/Validation'
 
 function Routeur() {
-  const { firebaseUser, profil, loading, logout } = useAuth()
+  const { firebaseUser, profil, loading, logout, anonyme } = useAuth()
   if (loading) return <Chargement />
   if (!firebaseUser) return <Login />
   if (!profil) return <Chargement />
@@ -40,12 +41,15 @@ function Routeur() {
         <Route path="/scan" element={<Scan />} />
         <Route path="/m/:ref" element={<Fiche />} />
         <Route path="/m/:ref/signaler" element={<Signalement />} />
-        <Route path="/tickets" element={<Tickets />} />
-        <Route path="/tickets/:id" element={<TicketDetail />} />
         <Route path="/inventaire/:lieuId" element={<Inventaire />} />
-        <Route path="/etiquettes" element={<Etiquettes />} />
-        <Route path="/ajout" element={<Ajout />} />
-        <Route path="/admin" element={<Admin />} />
+        {!anonyme && <>
+          <Route path="/tickets" element={<Tickets />} />
+          <Route path="/tickets/:id" element={<TicketDetail />} />
+          <Route path="/etiquettes" element={<Etiquettes />} />
+          <Route path="/ajout" element={<Ajout />} />
+          <Route path="/admin" element={<Admin />} />
+        </>}
+        {profil.role === 'admin' && <Route path="/validation" element={<Validation />} />}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </DataProvider>

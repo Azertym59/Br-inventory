@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { collection, onSnapshot, query, where } from 'firebase/firestore'
 import { db } from '../firebase'
-import type { Categorie, Lieu, Materiel, Modele, Ticket } from '../types'
+import type { Categorie, Lieu, Materiel, Modele, PropositionDeplacement, SignalementAValider, Ticket } from '../types'
 import { useAuth } from './auth'
 
 interface DataState {
@@ -11,6 +11,8 @@ interface DataState {
   modeles: Modele[]
   materiel: Materiel[]
   ticketsActifs: Ticket[]
+  signalementsAValider: SignalementAValider[]
+  propositionsAValider: PropositionDeplacement[]
   lieuCourant: Lieu | null
   choisirLieu: (id: string | null) => void
 }
@@ -36,15 +38,20 @@ function useCollection<T>(path: string, enabled: boolean, idKey = 'id', onlyActi
 }
 
 const ACTIFS: [string, string[]] = ['statut', ['ouvert', 'en_cours']]
+const A_VALIDER: [string, string[]] = ['statut', ['a_valider']]
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const { profil } = useAuth()
   const on = !!profil?.actif
+  const membre = on && profil?.role !== 'anonyme'
+  const admin = on && profil?.role === 'admin'
   const [lieux, l1] = useCollection<Lieu>('lieux', on)
   const [categories, l2] = useCollection<Categorie>('categories', on)
-  const [modeles] = useCollection<Modele>('modeles', on)
+  const [modeles] = useCollection<Modele>('modeles', membre)
   const [materiel, l3] = useCollection<Materiel>('materiel', on, 'ref')
-  const [ticketsActifs] = useCollection<Ticket>('tickets', on, 'id', ACTIFS)
+  const [ticketsActifs] = useCollection<Ticket>('tickets', membre, 'id', ACTIFS)
+  const [signalementsAValider] = useCollection<SignalementAValider>('signalements', admin, 'id', A_VALIDER)
+  const [propositionsAValider] = useCollection<PropositionDeplacement>('propositions', admin, 'id', A_VALIDER)
   const [lieuId, setLieuId] = useState<string | null>(() => {
     try { return localStorage.getItem('lieuCourant') } catch { return null }
   })
@@ -60,13 +67,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       modeles: tri(modeles),
       materiel: [...materiel].sort((a, b) => a.ref.localeCompare(b.ref)),
       ticketsActifs: [...ticketsActifs].sort((a, b) => (b.creeLe?.toMillis() ?? Date.now()) - (a.creeLe?.toMillis() ?? Date.now())),
+      signalementsAValider,
+      propositionsAValider,
       lieuCourant: lieuxTries.find((l) => l.id === lieuId) ?? null,
       choisirLieu: (id) => {
         setLieuId(id)
         try { if (id) localStorage.setItem('lieuCourant', id); else localStorage.removeItem('lieuCourant') } catch { /* stockage indisponible */ }
       },
     }
-  }, [lieux, categories, modeles, materiel, ticketsActifs, lieuId, l1, l2, l3])
+  }, [lieux, categories, modeles, materiel, ticketsActifs, signalementsAValider, propositionsAValider, lieuId, l1, l2, l3])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

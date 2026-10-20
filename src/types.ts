@@ -1,6 +1,6 @@
 import type { Timestamp } from 'firebase/firestore'
 
-export type Role = 'technicien' | 'responsable' | 'admin'
+export type Role = 'anonyme' | 'technicien' | 'admin'
 
 export interface Utilisateur {
   uid: string
@@ -118,7 +118,8 @@ export interface Ticket {
   description: string
   gravite: Gravite
   statut: StatutTicket
-  signalePar: { uid: string; nom: string }
+  signalePar: { uid: string; nom: string; anonyme?: boolean }
+  validePar?: { uid: string; nom: string } | null
   assigneA: { uid: string; nom: string } | null
   photos: string[]
   photosApres: string[]
@@ -138,4 +139,34 @@ export interface Inventaire {
   attendus: string[]
   demarreLe: Timestamp | null
   termineLe: Timestamp | null
+}
+
+// Signalement fait sans compte : un admin le valide (→ ticket) ou le rejette
+export interface SignalementAValider {
+  id: string
+  materielRef: string
+  materielNom: string
+  lieuId: string
+  lieuNom: string
+  description: string
+  gravite: Gravite
+  photos: string[]
+  gps: Gps | null
+  declarant: { uid: string; nom: string }
+  statut: 'a_valider' | 'valide' | 'rejete'
+  creeLe: Timestamp | null
+}
+
+// Matériel trouvé ailleurs que prévu lors d'un inventaire : un admin valide le déplacement
+export interface PropositionDeplacement {
+  id: string
+  materielRef: string
+  materielNom: string
+  deLieuId: string
+  deLieuNom: string
+  versLieuId: string
+  versLieuNom: string
+  par: { uid: string; nom: string }
+  statut: 'a_valider' | 'valide' | 'rejete'
+  creeLe: Timestamp | null
 }

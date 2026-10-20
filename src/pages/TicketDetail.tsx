@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { doc, onSnapshot } from 'firebase/firestore'
+import { collection, doc, onSnapshot } from 'firebase/firestore'
 import { db } from '../firebase'
-import { cloturerReparation, LIBELLES_GRAVITE, prendreEnCharge } from '../lib/actions'
+import { assignerTicket, cloturerReparation, LIBELLES_GRAVITE, prendreEnCharge } from '../lib/actions'
 import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { formatDate, PageHeader, PhotoPicker, toast } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { COULEURS_GRAVITE } from './Tickets'
-import type { Ticket } from '../types'
+import type { Ticket, Utilisateur } from '../types'
 
 export default function TicketDetail() {
   const { id = '' } = useParams()
@@ -20,7 +20,16 @@ export default function TicketDetail() {
   const [busy, setBusy] = useState(false)
   const [cloture, setCloture] = useState(false)
 
+  const admin = profil?.role === 'admin'
+  const [equipe, setEquipe] = useState<Utilisateur[]>([])
+
   useEffect(() => onSnapshot(doc(db, 'tickets', id), (s) => setT(s.exists() ? ({ id: s.id, ...s.data() }) as Ticket : null)), [id])
+  useEffect(() => {
+    if (!admin) return
+    return onSnapshot(collection(db, 'utilisateurs'), (s) => setEquipe(
+      s.docs.map((d) => ({ uid: d.id, ...d.data() }) as Utilisateur).filter((u) => u.actif && u.role !== 'anonyme').sort((a, b) => a.nom.localeCompare(b.nom)),
+    ))
+  }, [admin])
 
   if (t === undefined) return <div className="page"><PageHeader titre="Chargement…" back /></div>
   if (t === null) return <div className="page"><PageHeader titre="Ticket introuvable" back="/tickets" /></div>
@@ -52,7 +61,8 @@ export default function TicketDetail() {
         <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.45 }}>{t.description || 'Sans description'}</div>
         {t.photos.length > 0 && <div className="photos">{t.photos.map((p) => <a key={p} className="photo" href={p} target="_blank" rel="noreferrer"><img src={p} alt="Photo du problème" /></a>)}</div>}
         <div className="stack-s small" style={{ color: 'var(--text-3)', gap: 6 }}>
-          <div className="row" style={{ gap: 8 }}><Icon name="user" size={16} />Signalé par <strong>{t.signalePar.nom}</strong></div>
+          <div className="row" style={{ gap: 8 }}><Icon name="user" size={16} />Signalé par <strong>{t.signalePar.nom}</strong>{t.signalePar.anonyme ? ' (sans compte)' : ''}</div>
+          {t.validePar && <div className="row" style={{ gap: 8 }}><Icon name="check" size={16} />Validé par <strong>{t.validePar.nom}</strong></div>}
           <div className="row" style={{ gap: 8 }}><Icon name="pin" size={16} />{t.lieuNom}{t.gps && <a href={`https://maps.google.com/?q=${t.gps.lat},${t.gps.lng}`} target="_blank" rel="noreferrer">(voir la position)</a>}</div>
           <div className="row" style={{ gap: 8 }}><Icon name="clock" size={16} />{formatDate(t.creeLe)}</div>
         </div>
@@ -66,8 +76,20 @@ export default function TicketDetail() {
         </div>
       ) : (
         <div className="stack">
-          {t.statut === 'en_cours' && <div className="note info">Pris en charge par <strong>{t.assigneA?.nom}</strong> · {formatDate(t.majLe)}</div>}
-          {t.statut === 'ouvert' && <button type="button" className="btn primary block" disabled={busy} onClick={prendre}>Je prends en charge</button>}
+          {admin && (
+            <label className="field">Technicien assigné
+              <select className="input" value={t.assigneA?.uid ?? ''} onChange={async (e) => {
+                const u = equipe.find((x) => x.uid === e.target.value)
+                try { await assignerTicket(ctx, t, u ? { uid: u.uid, nom: u.nom } : null); toast(u ? `Assigné à ${u.nom}` : 'Désassigné') } catch (x) { toast(String(x), 'err') }
+              }}>
+                <option value="">Non assigné</option>
+                {equipe.map((u) => <option key={u.uid} value={u.uid}>{u.nom}{u.role === 'admin' ? ' (admin)' : ''}</option>)}
+              </select>
+            </label>
+          )}
+          {!admin && t.assigneA && <div className="note info">Assigné à <strong>{t.assigneA.nom}</strong>{t.statut === 'en_cours' ? ' · réparation en cours' : ''}</div>}
+          {t.statut === 'en_cours' && admin && <div className="note info">Réparation en cours · {formatDate(t.majLe)}</div>}
+          {t.statut === 'ouvert' && <button type="button" className="btn primary block" disabled={busy} onClick={prendre}>Je commence la réparation</button>}
           {!cloture ? (
             <button type="button" className="btn success block" onClick={() => setCloture(true)}><Icon name="check" stroke={2.6} />Marquer comme réparé</button>
           ) : (

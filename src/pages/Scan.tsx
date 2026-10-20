@@ -32,8 +32,8 @@ export default function Scan() {
     if (!lieuCourant) { setChoixLieu(true); return }
     setBusy(true)
     try {
-      const { deplace } = await inventorier({ user: profil, lieu: lieuCourant }, trouve, lieuCourant)
-      toast(deplace ? `Inventorié · déplacé vers ${lieuCourant.nom}` : 'Inventorié ✓')
+      const { deplace, propose } = await inventorier({ user: profil, lieu: lieuCourant }, trouve, lieuCourant)
+      toast(deplace ? `Inventorié · déplacé vers ${lieuCourant.nom}` : propose ? 'Inventorié · déplacement proposé aux admins' : 'Inventorié ✓')
       setTrouve(null)
     } catch (e) { toast('Erreur : ' + String(e), 'err') } finally { setBusy(false) }
   }
@@ -76,7 +76,7 @@ export default function Scan() {
               <div className="row" style={{ gap: 8 }}><span className="muted">{trouve.lieuNom}</span><StatutBadge statut={trouve.statut} /></div>
             </div>
             {lieuCourant && trouve.lieuId !== lieuCourant.id && (
-              <div className="note warn">Ce matériel est enregistré à « {trouve.lieuNom} ». En l'inventoriant ici, il sera déplacé vers « {lieuCourant.nom} ».</div>
+              <div className="note warn">Ce matériel est enregistré à « {trouve.lieuNom} ». {profil?.role === 'admin' ? `En l'inventoriant ici, il sera déplacé vers « ${lieuCourant.nom} ».` : 'En l\u2019inventoriant ici, un admin sera prévenu pour valider le déplacement.'}</div>
             )}
             <div className="grid-2">
               <button type="button" className="btn success" disabled={busy} onClick={presentIci}><Icon name="check" stroke={2.6} />Présent ici</button>
@@ -99,7 +99,7 @@ export default function Scan() {
             <p className="muted">Ce QR code n'appartient à aucun matériel enregistré.</p>
             <div className="grid-2">
               <button type="button" className="btn" onClick={() => setInconnu(null)}>Réessayer</button>
-              <Link to="/ajout" className="btn primary">Nouveau matériel</Link>
+              {profil?.role !== 'anonyme' ? <Link to="/ajout" className="btn primary">Nouveau matériel</Link> : <span />}
             </div>
           </div>
         </div>

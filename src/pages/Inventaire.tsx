@@ -68,8 +68,9 @@ export default function Inventaire() {
     if (scannes.includes(m.ref) || enCours.current.has(m.ref)) { setDernier({ ref: m.ref, ok: true, msg: `${m.nom} · déjà scanné` }); return }
     enCours.current.add(m.ref)
     setScannes((s) => [...s, m.ref])
-    const deplace = m.lieuId !== lieu.id
-    setDernier({ ref: m.ref, ok: true, msg: deplace ? `${m.nom} · déplacé ici (était à ${m.lieuNom})` : m.nom })
+    const ailleurs = m.lieuId !== lieu.id
+    const admin = profil.role === 'admin'
+    setDernier({ ref: m.ref, ok: true, msg: !ailleurs ? m.nom : admin ? `${m.nom} · déplacé ici (était à ${m.lieuNom})` : `${m.nom} · attendu à ${m.lieuNom}, déplacement proposé aux admins` })
     try {
       await inventorier({ user: profil, lieu }, m, lieu, gps.current ?? null)
       await updateDoc(doc(db, 'inventaires', invId), { scannes: arrayUnion(m.ref) })

@@ -22,7 +22,7 @@ export default function Signalement() {
   const [description, setDescription] = useState('')
   const [photos, setPhotos] = useState<File[]>([])
   const [envoi, setEnvoi] = useState(false)
-  const [numero, setNumero] = useState<string | null>(null)
+  const [resultat, setResultat] = useState<{ numero: string | null; aValider: boolean } | null>(null)
 
   if (!m) return <div className="page"><PageHeader titre="Matériel introuvable" back /></div>
 
@@ -30,24 +30,25 @@ export default function Signalement() {
     if (!description.trim()) { toast('Décris le problème en quelques mots', 'err'); return }
     setEnvoi(true)
     try {
-      setNumero(await signaler({ user: profil!, lieu: lieuCourant }, m, { description: description.trim(), gravite, photos }))
+      setResultat(await signaler({ user: profil!, lieu: lieuCourant }, m, { description: description.trim(), gravite, photos }))
     } catch (e) {
       toast('Envoi impossible : ' + (String(e).includes('hors-ligne') ? 'pas de réseau' : String(e)), 'err')
     } finally { setEnvoi(false) }
   }
 
-  if (numero) {
+  if (resultat) {
     return (
       <div className="page center stack" style={{ textAlign: 'center', minHeight: '90dvh', gap: 18 }}>
         <div style={{ width: 88, height: 88, borderRadius: 28, background: 'var(--green)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Icon name="check" size={46} stroke={2.8} />
         </div>
-        <h1 className="h1">Ticket créé</h1>
-        <div className="ref" style={{ fontSize: 15 }}>{numero} · gravité {LIBELLES_GRAVITE[gravite].toLowerCase()}</div>
-        <p className="muted" style={{ fontSize: 15, lineHeight: 1.5 }}>Le signalement est enregistré avec ton nom, le lieu et l'heure.</p>
+        <h1 className="h1">{resultat.aValider ? 'Signalement envoyé' : 'Ticket créé'}</h1>
+        <div className="ref" style={{ fontSize: 15 }}>{resultat.numero ? `${resultat.numero} · ` : ''}gravité {LIBELLES_GRAVITE[gravite].toLowerCase()}</div>
+        <p className="muted" style={{ fontSize: 15, lineHeight: 1.5 }}>
+          {resultat.aValider ? 'Merci ! Un admin va le vérifier puis le transmettre aux techniciens. ' : ''}Le signalement est enregistré avec ton nom, le lieu et l'heure.</p>
         <div className="stack" style={{ width: '100%' }}>
-          <Link to="/tickets" className="btn primary block">Voir les tickets</Link>
-          <Link to="/scan" className="btn block">Scanner un autre matériel</Link>
+          {!resultat.aValider && <Link to="/tickets" className="btn primary block">Voir les tickets</Link>}
+          <Link to="/scan" className={`btn block ${resultat.aValider ? 'primary' : ''}`}>Scanner un autre matériel</Link>
         </div>
       </div>
     )

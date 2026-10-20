@@ -12,7 +12,7 @@ type Onglet = 'compte' | 'lieux' | 'categories' | 'equipe'
 
 export default function Admin() {
   const { profil, logout } = useAuth()
-  const responsable = aLeRole(profil, 'responsable')
+  const responsable = aLeRole(profil, 'admin')
   const admin = aLeRole(profil, 'admin')
   const [onglet, setOnglet] = useState<Onglet>(responsable ? 'lieux' : 'compte')
 
@@ -115,14 +115,14 @@ function Equipe() {
   useEffect(() => onSnapshot(collection(db, 'utilisateurs'), (s) => setUsers(s.docs.map((d) => ({ uid: d.id, ...d.data() }) as Utilisateur).sort((a, b) => a.nom.localeCompare(b.nom)))), [])
   return (
     <div className="stack">
-      <div className="note info">Les membres créent leur compte eux-mêmes (email ou Google), puis tu ajustes leur rôle ici. Technicien : scanne, signale, crée du matériel. Responsable : gère aussi les lieux, catégories et modèles. Admin : gère l'équipe.</div>
+      <div className="note info">Les techniciens et admins créent leur compte eux-mêmes (email ou Google), puis tu ajustes leur rôle ici. Technicien : réparations, création de matériel, étiquettes. Admin : valide les signalements, re-dispatche le matériel entre parcs, assigne les tickets, gère lieux, catégories et équipe. Les signalements et inventaires se font aussi sans compte.</div>
       <div className="card flush">
         {users.map((u) => (
           <div key={u.uid} className="list-item" style={{ cursor: 'default', flexWrap: 'wrap' }}>
             <div className="grow"><div style={{ fontWeight: 700 }}>{u.nom}{!u.actif && <span className="badge b-panne" style={{ marginLeft: 8 }}>désactivé</span>}</div><div className="muted small">{u.email}</div></div>
             <select className="input" style={{ width: 'auto', minHeight: 40, fontSize: 14 }} value={u.role} disabled={u.uid === profil?.uid}
               onChange={async (e) => { await updateDoc(doc(db, 'utilisateurs', u.uid), { role: e.target.value as Role }); toast('Rôle mis à jour') }}>
-              <option value="technicien">Technicien</option><option value="responsable">Responsable</option><option value="admin">Admin</option>
+              <option value="technicien">Technicien</option><option value="admin">Admin</option>
             </select>
             {u.uid !== profil?.uid && <button type="button" className="btn small" onClick={async () => { await updateDoc(doc(db, 'utilisateurs', u.uid), { actif: !u.actif }) }}>{u.actif ? 'Désactiver' : 'Réactiver'}</button>}
           </div>
