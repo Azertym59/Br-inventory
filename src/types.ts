@@ -62,6 +62,7 @@ export interface Materiel {
   modeleNom: string | null
   valeurs: Record<string, string>
   quantite: number | null
+  numero?: number | null // n° de la pièce dans sa série (ex. dalle 042)
   lieuId: string
   lieuNom: string
   statut: Statut

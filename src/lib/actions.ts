@@ -87,15 +87,17 @@ export interface NouveauMateriel {
   nom: string
   valeurs: Record<string, string>
   quantite: number | null
+  numero?: number | null
   lieu: Lieu
   photo: File | null
+  gps?: Gps | null
 }
 
 export async function creerMateriel(ctx: Contexte, n: NouveauMateriel): Promise<string> {
   const num = await prochainNumero('materiel')
   const ref = `${REF_PREFIX}-${String(num).padStart(5, '0')}`
   const photoUrl = n.photo ? (await envoyerPhotos([n.photo], `materiel/${ref}`))[0] : null
-  const gps = await positionGps(4000)
+  const gps = n.gps !== undefined ? n.gps : await positionGps(4000)
   const data: Omit<Materiel, 'creeLe' | 'dernierInventaire'> & Record<string, unknown> = {
     ref,
     nom: n.nom,
@@ -106,6 +108,7 @@ export async function creerMateriel(ctx: Contexte, n: NouveauMateriel): Promise<
     modeleNom: n.modele?.nom ?? null,
     valeurs: n.valeurs,
     quantite: n.quantite,
+    numero: n.numero ?? null,
     lieuId: n.lieu.id,
     lieuNom: n.lieu.nom,
     statut: 'ok',
@@ -205,7 +208,7 @@ export async function changerStatut(ctx: Contexte, m: Materiel, statut: Statut, 
   enFond(journal(ctx, m, 'statut', `Statut : ${LIBELLES_STATUT[statut]}`, { commentaire: commentaire || null }), 'journal')
 }
 
-export async function modifierMateriel(ctx: Contexte, m: Materiel, champs: Partial<Pick<Materiel, 'nom' | 'valeurs' | 'quantite'>>) {
+export async function modifierMateriel(ctx: Contexte, m: Materiel, champs: Partial<Pick<Materiel, 'nom' | 'valeurs' | 'quantite' | 'numero'>>) {
   await updateDoc(doc(db, 'materiel', m.ref), champs)
   await journal(ctx, m, 'modification', 'Fiche modifiée')
 }
@@ -339,3 +342,18 @@ export const LIBELLES_STATUT: Record<Statut, string> = {
   ok: 'OK', surveiller: 'À surveiller', panne: 'En panne', reparation: 'En réparation', hs: 'Hors service',
 }
 export const LIBELLES_GRAVITE: Record<Gravite, string> = { faible: 'Faible', moyenne: 'Moyenne', critique: 'Critique' }
+
+// Numérotation d'une série (ex. 195 dalles → Dalle 001 à Dalle 195), dans l'ordre donné
+export async function numeroter(items: Materiel[], depart: number) {
+  for (let i = 0; i < items.length; i += 400) {
+    const batch = writeBatch(db)
+    items.slice(i, i + 400).forEach((m, j) => batch.update(doc(db, 'materiel', m.ref), { numero: depart + i + j }))
+    await batch.commit()
+  }
+}
+
+// Ordre d'une série : par numéro, puis par référence
+export function trierSerie<T extends Pick<Materiel, 'ref' | 'numero'>>(items: T[]): T[] {
+  return [...items].sort((a, b) =>
+    (a.numero ?? Number.MAX_SAFE_INTEGER) - (b.numero ?? Number.MAX_SAFE_INTEGER) || a.ref.localeCompare(b.ref))
+}

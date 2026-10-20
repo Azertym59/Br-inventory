@@ -4,6 +4,7 @@ import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/f
 import { db } from '../firebase'
 import { changerStatut, deplacer, inventorier, LIBELLES_STATUT, modifierMateriel } from '../lib/actions'
 import { useAuth } from '../lib/auth'
+import { libelleNumero } from '../lib/etiquettes'
 import { useData } from '../lib/data'
 import { BackButton, formatDate, LieuPicker, PageHeader, Sheet, StatutBadge, toast } from '../components/ui'
 import { Icon } from '../components/Icon'
@@ -26,6 +27,7 @@ export default function Fiche() {
   const [edition, setEdition] = useState<Record<string, string>>({})
   const [nomEdit, setNomEdit] = useState('')
   const [qteEdit, setQteEdit] = useState('')
+  const [numEdit, setNumEdit] = useState('')
 
   useEffect(() => {
     if (anonyme) return
@@ -62,6 +64,7 @@ export default function Fiche() {
 
   const infos: [string, string][] = [
     ['Catégorie', m.categorieNom],
+    ...(m.numero != null ? [['Numéro', libelleNumero(m)] as [string, string]] : []),
     ...(m.modeleNom ? [['Modèle type', m.modeleNom] as [string, string]] : []),
     ...(cat?.champs ?? []).filter((c) => m.valeurs?.[c.key]).map((c) => [c.label, m.valeurs[c.key]] as [string, string]),
     ...(m.quantite ? [['Quantité', String(m.quantite)] as [string, string]] : []),
@@ -70,7 +73,7 @@ export default function Fiche() {
   ]
 
   const ouvrirModif = () => {
-    setEdition({ ...(m.valeurs ?? {}) }); setNomEdit(m.nom); setQteEdit(m.quantite ? String(m.quantite) : ''); setSheet('modifier')
+    setEdition({ ...(m.valeurs ?? {}) }); setNomEdit(m.nom); setQteEdit(m.quantite ? String(m.quantite) : ''); setNumEdit(m.numero != null ? String(m.numero) : ''); setSheet('modifier')
   }
 
   return (
@@ -88,7 +91,7 @@ export default function Fiche() {
           <StatutBadge statut={m.statut} />
           {tickets.length > 0 && <span className="badge b-neutre">{tickets.length} ticket(s) ouvert(s)</span>}
         </div>
-        <h1 className="h1">{m.nom}{m.quantite ? <span style={{ color: 'var(--muted)' }}> × {m.quantite}</span> : null}</h1>
+        <h1 className="h1">{m.nom}{m.numero != null ? <span style={{ color: 'var(--accent-ink)' }}> · {libelleNumero(m)}</span> : null}{m.quantite ? <span style={{ color: 'var(--muted)' }}> × {m.quantite}</span> : null}</h1>
         <div className="row muted" style={{ gap: 6, fontSize: 14 }}><Icon name="pin" size={16} />{m.lieuNom}</div>
       </div>
 
@@ -171,11 +174,12 @@ export default function Fiche() {
           <form className="stack" onSubmit={async (e) => {
             e.preventDefault()
             try {
-              await modifierMateriel(ctx, m, { nom: nomEdit.trim() || m.nom, valeurs: edition, quantite: qteEdit ? Number(qteEdit) : m.quantite })
+              await modifierMateriel(ctx, m, { nom: nomEdit.trim() || m.nom, valeurs: edition, quantite: qteEdit ? Number(qteEdit) : m.quantite, numero: numEdit ? Number(numEdit) : null })
               toast('Fiche enregistrée'); setSheet(null)
             } catch (x) { toast(String(x), 'err') }
           }}>
             <label className="field">Nom<input className="input" value={nomEdit} onChange={(e) => setNomEdit(e.target.value)} /></label>
+            {m.quantite === null && <label className="field">Numéro de la pièce (facultatif)<input className="input" type="number" min={1} inputMode="numeric" value={numEdit} onChange={(e) => setNumEdit(e.target.value)} /></label>}
             {m.quantite !== null && <label className="field">Quantité<input className="input" type="number" min={1} value={qteEdit} onChange={(e) => setQteEdit(e.target.value)} /></label>}
             {(cat?.champs ?? []).map((c) => (
               <label key={c.key} className="field">{c.label}

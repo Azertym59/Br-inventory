@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { addDoc, collection, doc, setDoc } from 'firebase/firestore'
 import { db } from '../firebase'
-import { creerMateriel } from '../lib/actions'
+import { creerMateriel, positionGps } from '../lib/actions'
 import { aLeRole, useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { calculerResolution, couleurFamille, FAMILLES } from '../data/catalogue'
@@ -17,13 +17,15 @@ function slug(s: string) {
 export default function Ajout() {
   const nav = useNavigate()
   const { profil } = useAuth()
-  const { categories, modeles, lieux, lieuCourant } = useData()
+  const { categories, modeles, lieux, lieuCourant, materiel } = useData()
   const responsable = aLeRole(profil, 'admin')
   const [catId, setCatId] = useState<string>('')
   const [modeleId, setModeleId] = useState<string | null>(null)
   const [quantiteMode, setQuantiteMode] = useState(false)
   const [quantite, setQuantite] = useState('10')
   const [exemplaires, setExemplaires] = useState('1')
+  const [numeroter, setNumeroter] = useState(true)
+  const [numeroDepart, setNumeroDepart] = useState('1')
   const [valeurs, setValeurs] = useState<Record<string, string>>({})
   const [nom, setNom] = useState('')
   const [nomTouche, setNomTouche] = useState(false)
@@ -42,6 +44,12 @@ export default function Ajout() {
   }, [categories])
 
   useEffect(() => { if (!lieuId && lieuCourant) setLieuId(lieuCourant.id) }, [lieuCourant, lieuId])
+
+  // Numéro proposé : la suite de la série existante (même catégorie et même modèle)
+  useEffect(() => {
+    const serie = materiel.filter((m) => m.categorieId === catId && (m.modeleId ?? null) === (modeleId ?? null) && m.numero != null)
+    setNumeroDepart(String(serie.length ? Math.max(...serie.map((m) => m.numero!)) + 1 : 1))
+  }, [materiel, catId, modeleId])
 
   // Nom proposé automatiquement (modifiable)
   useEffect(() => {
@@ -72,18 +80,23 @@ export default function Ajout() {
   const creer = async (imprimer: boolean) => {
     const lieu = lieux.find((l) => l.id === lieuId)
     if (!cat || !lieu || !profil) { toast('Choisis une catégorie et un lieu', 'err'); return }
-    const n = quantiteMode ? 1 : Math.max(1, Math.min(200, parseInt(exemplaires) || 1))
+    const n = quantiteMode ? 1 : Math.max(1, Math.min(500, parseInt(exemplaires) || 1))
+    const depart = Math.max(1, parseInt(numeroDepart) || 1)
+    const avecNumero = !quantiteMode && numeroter
     const refs: string[] = []
     try {
+      setBusy('Création…')
+      const gps = await positionGps(4000)
       for (let i = 0; i < n; i++) {
         setBusy(n > 1 ? `Création ${i + 1} / ${n}…` : 'Création…')
         refs.push(await creerMateriel({ user: profil, lieu }, {
           categorie: cat, modele, nom: nom.trim() || cat.nom, valeurs: i === 0 ? valeurs : { ...valeurs, serie: '' },
           quantite: quantiteMode ? Math.max(1, parseInt(quantite) || 1) : null, lieu, photo: i === 0 ? photo[0] ?? null : null,
+          numero: avecNumero ? depart + i : null, gps,
         }))
       }
       toast(n > 1 ? `${n} matériels créés (${refs[0]} → ${refs[n - 1]})` : `${refs[0]} créé`)
-      if (n > 1) nav(`/etiquettes?lieu=${lieu.id}`)
+      if (n > 1) nav(`/etiquettes?lieu=${lieu.id}&cat=${cat.id}${modele ? `&modele=${modele.id}` : ''}`)
       else nav(imprimer ? `/etiquettes?ref=${refs[0]}` : `/m/${refs[0]}`)
     } catch (e) {
       toast(String(e).includes('hors-ligne') ? 'Pas de réseau : la création nécessite une connexion' : 'Erreur : ' + String(e), 'err')
@@ -159,10 +172,26 @@ export default function Ajout() {
                   <input className="input" type="number" min={1} inputMode="numeric" value={quantite} onChange={(e) => setQuantite(e.target.value)} />
                 </label>
               ) : (
-                <label className="field">Nombre d'exemplaires à créer
-                  <input className="input" type="number" min={1} max={200} inputMode="numeric" value={exemplaires} onChange={(e) => setExemplaires(e.target.value)} />
-                  <span className="muted small" style={{ fontWeight: 500 }}>Ex. : 24 dalles identiques → 24 fiches et 24 QR codes. Les n° de série se complètent ensuite sur chaque fiche.</span>
-                </label>
+                <>
+                  <label className="field">Nombre d'exemplaires à créer
+                    <input className="input" type="number" min={1} max={500} inputMode="numeric" value={exemplaires} onChange={(e) => setExemplaires(e.target.value)} />
+                    <span className="muted small" style={{ fontWeight: 500 }}>Ex. : 195 dalles identiques → 195 fiches et 195 QR codes. Les n° de série se complètent ensuite sur chaque fiche.</span>
+                  </label>
+                  <div className="card stack-s" style={{ gap: 10, padding: 14 }}>
+                    <label className="row between" style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-3)' }}>
+                      Numéroter les pièces (« {cat.nom.split(/\s+/)[0]} 001 »…)
+                      <input type="checkbox" checked={numeroter} onChange={(e) => setNumeroter(e.target.checked)} style={{ width: 24, height: 24, accentColor: '#2563EB' }} />
+                    </label>
+                    {numeroter && (
+                      <label className="field">Premier numéro
+                        <input className="input" type="number" min={1} inputMode="numeric" value={numeroDepart} onChange={(e) => setNumeroDepart(e.target.value)} />
+                        <span className="muted small" style={{ fontWeight: 500 }}>
+                          {(() => { const d = Math.max(1, parseInt(numeroDepart) || 1); const k = Math.max(1, parseInt(exemplaires) || 1); const p = (x: number) => String(x).padStart(3, '0'); return k > 1 ? `De ${p(d)} à ${p(d + k - 1)}` : `N° ${p(d)}` })()} · imprimé en gros sur l'étiquette
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                </>
               )}
               {champsVisibles.map((c) => (
                 <label key={c.key} className="field">{c.label}

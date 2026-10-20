@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { deplacerLot } from '../lib/actions'
 import { useAuth } from '../lib/auth'
+import { libelleNumero } from '../lib/etiquettes'
+import { trierSerie } from '../lib/actions'
 import { useData } from '../lib/data'
 import { BottomNav, LieuPicker, PageHeader, StatutBadge, toast } from '../components/ui'
 import { Icon } from '../components/Icon'
@@ -17,7 +19,7 @@ export default function LieuDetail() {
   const [choixDest, setChoixDest] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  const items = useMemo(() => materiel.filter((m) => m.lieuId === id), [materiel, id])
+  const items = useMemo(() => trierSerie(materiel.filter((m) => m.lieuId === id)).sort((a, b) => a.categorieNom.localeCompare(b.categorieNom)), [materiel, id])
   const familles = useMemo(() => [...new Set(items.map((m) => m.famille))].sort(), [items])
   const visibles = famille ? items.filter((m) => m.famille === famille) : items
 
@@ -70,14 +72,14 @@ export default function LieuDetail() {
             <label key={m.ref} className="list-item">
               <input type="checkbox" checked={selection.has(m.ref)} onChange={() => basculer(m.ref)} style={{ width: 22, height: 22, accentColor: '#2563EB' }} />
               <div className="grow">
-                <div style={{ fontWeight: 700 }}>{m.nom}{m.quantite ? <span className="muted"> × {m.quantite}</span> : null}</div>
+                <div style={{ fontWeight: 700 }}>{m.nom}{m.numero != null ? <span style={{ color: 'var(--accent-ink)' }}> · {libelleNumero(m)}</span> : null}{m.quantite ? <span className="muted"> × {m.quantite}</span> : null}</div>
                 <div className="muted"><span className="ref">{m.ref}</span> · {m.categorieNom}</div>
               </div>
             </label>
           ) : (
             <Link key={m.ref} to={`/m/${encodeURIComponent(m.ref)}`} className="list-item">
               <div className="grow">
-                <div style={{ fontWeight: 700 }}>{m.nom}{m.quantite ? <span className="muted"> × {m.quantite}</span> : null}</div>
+                <div style={{ fontWeight: 700 }}>{m.nom}{m.numero != null ? <span style={{ color: 'var(--accent-ink)' }}> · {libelleNumero(m)}</span> : null}{m.quantite ? <span className="muted"> × {m.quantite}</span> : null}</div>
                 <div className="muted"><span className="ref">{m.ref}</span> · {m.categorieNom}</div>
               </div>
               <StatutBadge statut={m.statut} />
