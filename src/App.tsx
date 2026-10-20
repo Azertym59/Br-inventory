@@ -1,5 +1,4 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
-import { firebaseConfigured } from './firebase'
 import { AuthProvider, useAuth } from './lib/auth'
 import { DataProvider } from './lib/data'
 import { Chargement, ToastHost } from './components/ui'
@@ -19,10 +18,9 @@ import Admin from './pages/Admin'
 import Validation from './pages/Validation'
 
 function Routeur() {
-  const { firebaseUser, profil, loading, logout, anonyme } = useAuth()
+  const { profil, loading, logout, anonyme } = useAuth()
   if (loading) return <Chargement />
-  if (!firebaseUser) return <Login />
-  if (!profil) return <Chargement />
+  if (!profil) return <Login />
   if (!profil.actif) {
     return (
       <div className="page center stack" style={{ textAlign: 'center' }}>
@@ -57,14 +55,6 @@ function Routeur() {
 }
 
 export default function App() {
-  if (!firebaseConfigured) {
-    return (
-      <div className="app page stack">
-        <h1 className="h1">Configuration requise</h1>
-        <div className="note warn">Le fichier <span className="mono">.env</span> avec les clés Firebase est manquant. Suis le README, étape « Configurer Firebase ».</div>
-      </div>
-    )
-  }
   return (
     <AuthProvider>
       <div className="app">

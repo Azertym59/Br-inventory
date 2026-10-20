@@ -1,14 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
-import { db } from '../firebase'
-import { extraireRef, inventorier, positionGps } from '../lib/actions'
+import { cloturerInventaire, demarrerInventaire, extraireRef, inventorier, lireInventaire, positionGps } from '../lib/actions'
 import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { QrCamera } from '../components/QrCamera'
 import { formatDate, PageHeader, toast } from '../components/ui'
 import { Icon } from '../components/Icon'
 import type { Gps } from '../types'
+
+// Session d'inventaire gardée sur le téléphone : on peut la reprendre, même sans réseau
+interface SessionLocale { id: string | null; attendus: string[]; scannes: string[] }
+const cleSession = (lieuId: string) => `inventaire-${lieuId}`
+function lireSession(lieuId: string): SessionLocale | null {
+  try { return JSON.parse(localStorage.getItem(cleSession(lieuId)) ?? 'null') as SessionLocale | null } catch { return null }
+}
+function ecrireSession(lieuId: string, s: SessionLocale | null) {
+  try { if (s) localStorage.setItem(cleSession(lieuId), JSON.stringify(s)); else localStorage.removeItem(cleSession(lieuId)) } catch { /* rien */ }
+}
 
 export default function Inventaire() {
   const { lieuId = '' } = useParams()
@@ -17,6 +25,7 @@ export default function Inventaire() {
   const { lieux, materiel, choisirLieu, pret } = useData()
   const lieu = lieux.find((l) => l.id === lieuId)
   const [invId, setInvId] = useState<string | null>(null)
+  const [demarre, setDemarre] = useState(false)
   const [attendus, setAttendus] = useState<string[]>([])
   const [scannes, setScannes] = useState<string[]>([])
   const [tab, setTab] = useState<'manquants' | 'scannes'>('manquants')
@@ -30,32 +39,32 @@ export default function Inventaire() {
     if (!lieu || !profil || !pret) return
     choisirLieu(lieu.id)
     let annule = false
-    const cle = `inventaire-${lieu.id}`
     ;(async () => {
-      let id: string | null = null
-      try { id = localStorage.getItem(cle) } catch { /* rien */ }
-      if (id) {
-        // Lecture depuis le cache si pas de réseau
-        const s = await Promise.race([
-          getDoc(doc(db, 'inventaires', id)).catch(() => null),
-          new Promise<null>((r) => setTimeout(() => r(null), 3000)),
-        ])
-        if (s?.exists() && !s.data().termineLe) {
+      const loc = lireSession(lieu.id)
+      if (loc) {
+        let s: SessionLocale | null = loc
+        if (loc.id) {
+          const srv = await lireInventaire(loc.id).catch(() => null)
+          if (srv?.termineLe) s = null
+          else if (srv) s = { id: loc.id, attendus: srv.attendus, scannes: [...new Set([...srv.scannes, ...loc.scannes])] }
+        }
+        if (s) {
           if (annule) return
-          setInvId(id); setAttendus(s.data().attendus ?? []); setScannes(s.data().scannes ?? [])
+          setInvId(s.id); setAttendus(s.attendus); setScannes(s.scannes); setDemarre(true)
           return
         }
       }
-      const att = materiel.filter((m) => m.lieuId === lieu.id).map((m) => m.ref)
+      let s: SessionLocale
+      try {
+        const inv = await demarrerInventaire(lieu.id)
+        s = { id: inv.id, attendus: inv.attendus, scannes: [] }
+      } catch {
+        // Sans réseau : liste attendue calculée sur le téléphone, scans envoyés plus tard
+        s = { id: null, attendus: materiel.filter((m) => m.lieuId === lieu.id).map((m) => m.ref), scannes: [] }
+      }
       if (annule) return
-      // Identifiant créé localement : fonctionne même sans réseau
-      const ref = doc(collection(db, 'inventaires'))
-      try { localStorage.setItem(cle, ref.id) } catch { /* rien */ }
-      setInvId(ref.id); setAttendus(att); setScannes([])
-      setDoc(ref, {
-        lieuId: lieu.id, lieuNom: lieu.nom, par: { uid: profil.uid, nom: profil.nom },
-        attendus: att, scannes: [], demarreLe: serverTimestamp(), termineLe: null,
-      }).catch((e) => console.error(e))
+      ecrireSession(lieu.id, s)
+      setInvId(s.id); setAttendus(s.attendus); setScannes([]); setDemarre(true)
     })()
     positionGps(6000).then((p) => { gps.current = p })
     return () => { annule = true }
@@ -67,27 +76,29 @@ export default function Inventaire() {
   const pct = total ? Math.round((scannes.length / total) * 100) : 0
 
   const onScan = async (texte: string) => {
-    if (!lieu || !profil || !invId) return
+    if (!lieu || !profil || !demarre) return
     const r = extraireRef(texte)
     const m = r ? parRef.get(r) : undefined
     if (!m) { setDernier({ ref: r ?? '?', ok: false, msg: 'Code inconnu' }); navigator.vibrate?.([80, 60, 80]); return }
     if (scannes.includes(m.ref) || enCours.current.has(m.ref)) { setDernier({ ref: m.ref, ok: true, msg: `${m.nom} · déjà scanné` }); return }
     enCours.current.add(m.ref)
-    setScannes((s) => [...s, m.ref])
+    const nouveaux = [...scannes, m.ref]
+    setScannes(nouveaux)
+    ecrireSession(lieu.id, { id: invId, attendus, scannes: nouveaux })
     const ailleurs = m.lieuId !== lieu.id
     const admin = profil.role === 'admin'
     setDernier({ ref: m.ref, ok: true, msg: !ailleurs ? m.nom : admin ? `${m.nom} · déplacé ici (était à ${m.lieuNom})` : `${m.nom} · attendu à ${m.lieuNom}, déplacement proposé aux admins` })
     try {
-      await inventorier({ user: profil, lieu }, m, lieu, gps.current ?? null)
-      updateDoc(doc(db, 'inventaires', invId), { scannes: arrayUnion(m.ref) }).catch((e) => console.error(e))
+      const res = await inventorier({ user: profil, lieu }, m, lieu, gps.current ?? null, invId)
+      if (res.enAttente) setDernier((d) => d && d.ref === m.ref ? { ...d, msg: `${d.msg} · envoi au retour du réseau` } : d)
     } catch (e) { toast('Erreur : ' + String(e), 'err') } finally { enCours.current.delete(m.ref) }
   }
 
   const cloturer = async () => {
-    if (!invId || !lieu) return
+    if (!lieu) return
     if (manquants.length && !confirm(`${manquants.length} matériel(s) non scanné(s). Clôturer quand même ?`)) return
-    updateDoc(doc(db, 'inventaires', invId), { termineLe: serverTimestamp() }).catch((e) => console.error(e))
-    try { localStorage.removeItem(`inventaire-${lieu.id}`) } catch { /* rien */ }
+    if (invId) await cloturerInventaire(invId).catch(() => {})
+    ecrireSession(lieu.id, null)
     toast(`Inventaire clôturé · ${scannes.length}/${total}`)
     nav(`/lieux/${lieu.id}`)
   }

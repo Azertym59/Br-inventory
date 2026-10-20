@@ -15,7 +15,7 @@ export default function Validation() {
   const [busy, setBusy] = useState<string | null>(null)
   const ctx = { user: profil!, lieu: lieuCourant }
   const parRef = new Map(materiel.map((m) => [m.ref, m]))
-  const tri = <T extends { creeLe: { toMillis: () => number } | null }>(a: T[]) => [...a].sort((x, y) => (x.creeLe?.toMillis() ?? 0) - (y.creeLe?.toMillis() ?? 0))
+  const tri = <T extends { creeLe: string | null }>(a: T[]) => [...a].sort((x, y) => (x.creeLe ? Date.parse(x.creeLe) : 0) - (y.creeLe ? Date.parse(y.creeLe) : 0))
 
   const sig = async (s: SignalementAValider, ok: boolean, g?: Gravite) => {
     setBusy(s.id)

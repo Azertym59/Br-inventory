@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore'
-import { db } from '../firebase'
+import { get } from '../lib/api'
 import { aLeRole, useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { BottomNav, formatDate, LieuCourantPill } from '../components/ui'
@@ -21,12 +20,10 @@ export default function Accueil() {
 
   useEffect(() => {
     if (anonyme) return
-    return onSnapshot(
-      query(collection(db, 'evenements'), orderBy('date', 'desc'), limit(8)),
-      (s) => setEvts(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Evenement)),
-      (e) => console.error(e),
-    )
-  }, [anonyme])
+    let ok = true
+    get<Evenement[]>('/evenements?limite=8').then((e) => { if (ok) setEvts(e) }).catch(() => {})
+    return () => { ok = false }
+  }, [anonyme, materiel])
 
   const stats = useMemo(() => {
     const parLieu = new Map<string, { nb: number; tickets: number }>()
@@ -45,7 +42,7 @@ export default function Accueil() {
       parLieu,
       critiques: ticketsActifs.filter((t) => t.gravite === 'critique').length,
       aEtiqueter: materiel.filter((m) => !m.etiquetee).length,
-      ceMois: materiel.filter((m) => (m.creeLe?.toMillis() ?? Date.now()) >= debutMois.getTime()).length,
+      ceMois: materiel.filter((m) => (m.creeLe ? Date.parse(m.creeLe) : Date.now()) >= debutMois.getTime()).length,
       enPanne: materiel.filter((m) => m.statut === 'panne' || m.statut === 'hs').length,
     }
   }, [materiel, ticketsActifs])

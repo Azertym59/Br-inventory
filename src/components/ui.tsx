@@ -1,17 +1,27 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import type { Timestamp } from 'firebase/firestore'
 import { LIBELLES_STATUT } from '../lib/actions'
 import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import type { Statut } from '../types'
 import { Icon } from './Icon'
 
+function BandeauReseau() {
+  const { horsLigne, enAttente } = useData()
+  if (!horsLigne && !enAttente) return null
+  return (
+    <div role="status" style={{ background: horsLigne ? '#92400E' : '#1D4ED8', color: '#fff', fontSize: 12, fontWeight: 700, textAlign: 'center', padding: '6px 12px' }}>
+      {horsLigne ? 'Hors ligne' : 'Synchronisation'}{enAttente ? ` · ${enAttente} action(s) en attente d'envoi` : ' · les données affichées peuvent dater'}
+    </div>
+  )
+}
+
 export function BottomNav() {
   const { anonyme } = useAuth()
   const cls = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : '')
   return (
     <nav className="bottom-nav" aria-label="Navigation principale">
+      <BandeauReseau />
       <div className="inner">
         <NavLink to="/" end className={cls}><Icon name="home" size={24} />Accueil</NavLink>
         <NavLink to="/lieux" className={cls}><Icon name="pin" size={24} />Lieux</NavLink>
@@ -148,9 +158,9 @@ export function PhotoPicker({ fichiers, onChange, max = 3 }: { fichiers: File[];
   )
 }
 
-export function formatDate(t: Timestamp | null | undefined, avecHeure = true): string {
+export function formatDate(t: string | null | undefined, avecHeure = true): string {
   if (!t) return 'à l’instant'
-  const d = t.toDate()
+  const d = new Date(t)
   const auj = new Date()
   const hier = new Date(); hier.setDate(auj.getDate() - 1)
   const h = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })

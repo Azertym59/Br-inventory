@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { collection, doc, onSnapshot } from 'firebase/firestore'
-import { db } from '../firebase'
-import { assignerTicket, cloturerReparation, LIBELLES_GRAVITE, prendreEnCharge } from '../lib/actions'
+import { get } from '../lib/api'
+import { assignerTicket, chargerTicket, cloturerReparation, LIBELLES_GRAVITE, prendreEnCharge } from '../lib/actions'
 import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { formatDate, PageHeader, PhotoPicker, toast } from '../components/ui'
@@ -23,12 +22,16 @@ export default function TicketDetail() {
   const admin = profil?.role === 'admin'
   const [equipe, setEquipe] = useState<Utilisateur[]>([])
 
-  useEffect(() => onSnapshot(doc(db, 'tickets', id), (s) => setT(s.exists() ? ({ id: s.id, ...s.data() }) as Ticket : null)), [id])
+  // Rechargé à chaque mise à jour des données (après une action ou toutes les 20 s)
+  const { ticketsActifs } = useData()
+  useEffect(() => {
+    let ok = true
+    chargerTicket(id).then((x) => { if (ok) setT(x) }).catch(() => { if (ok) setT((v) => v ?? null) })
+    return () => { ok = false }
+  }, [id, ticketsActifs])
   useEffect(() => {
     if (!admin) return
-    return onSnapshot(collection(db, 'utilisateurs'), (s) => setEquipe(
-      s.docs.map((d) => ({ uid: d.id, ...d.data() }) as Utilisateur).filter((u) => u.actif && u.role !== 'anonyme').sort((a, b) => a.nom.localeCompare(b.nom)),
-    ))
+    get<Utilisateur[]>('/utilisateurs').then((u) => setEquipe(u.filter((x) => x.actif))).catch(() => {})
   }, [admin])
 
   if (t === undefined) return <div className="page"><PageHeader titre="Chargement…" back /></div>

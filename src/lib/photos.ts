@@ -1,21 +1,15 @@
 import imageCompression from 'browser-image-compression'
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
-import { storage } from '../firebase'
+import { api } from './api'
 
-// Compresse sur le téléphone (≈ 300 Ko max) puis envoie dans Firebase Storage
-export async function envoyerPhotos(fichiers: File[], dossier: string): Promise<string[]> {
+// Compresse sur le téléphone (≈ 300 Ko max) puis envoie au serveur (stockage sur le VPS)
+export async function envoyerPhotos(fichiers: File[]): Promise<string[]> {
   const urls: string[] = []
-  for (let i = 0; i < fichiers.length; i++) {
-    const compressee = await imageCompression(fichiers[i], {
-      maxSizeMB: 0.3,
-      maxWidthOrHeight: 1600,
-      useWebWorker: true,
-      fileType: 'image/jpeg',
-    })
-    const chemin = `photos/${dossier}/${Date.now()}-${i}.jpg`
-    const r = ref(storage, chemin)
-    await uploadBytes(r, compressee, { contentType: 'image/jpeg' })
-    urls.push(await getDownloadURL(r))
+  for (const f of fichiers) {
+    const compressee = await imageCompression(f, { maxSizeMB: 0.3, maxWidthOrHeight: 1600, useWebWorker: true, fileType: 'image/jpeg' })
+    const fd = new FormData()
+    fd.append('photo', new File([compressee], 'photo.jpg', { type: 'image/jpeg' }))
+    const r = await api<{ url: string }>('POST', '/photos', fd)
+    urls.push(r.url)
   }
   return urls
 }

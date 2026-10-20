@@ -5,101 +5,93 @@ inventaire par QR code, regroupement par stade et dépôt, signalement de probl�
 tickets de réparation et impression d'étiquettes sur Niimbot B1.
 
 Chaque action (création, inventaire, déplacement, signalement, réparation, étiquette) est
-enregistrée avec **la personne, le lieu, la date et la position GPS** dans un historique non modifiable.
+enregistrée avec **la personne, le lieu, la date et la position GPS** dans un historique.
 
-- **Stack** : React + Vite + TypeScript, PWA (vite-plugin-pwa)
-- **Données** : Firebase (Authentication, Firestore avec cache hors ligne, Storage pour les photos)
-- **Hébergement** : Firebase Hosting (gratuit)
+Tout tourne sur le VPS : **une seule image Docker** (l'app + son serveur) et **PostgreSQL**.
+
+- **App** : React + Vite + TypeScript, PWA installable, fonctionne hors ligne pour les scans
+- **Serveur** : Node.js (Hono) dans `server/`, sert l'app et l'API `/api`
+- **Base** : PostgreSQL (tables créées automatiquement au démarrage)
+- **Photos** : stockées sur le disque du VPS, dans le volume `/data`
 
 ---
 
-## 1. Créer le projet Firebase (une seule fois)
+## Mise en ligne avec Coolify
 
-1. Va sur <https://console.firebase.google.com> → **Ajouter un projet** (ex. `br-inventory`). Google Analytics : inutile.
-2. **Authentication** → Commencer → onglet *Sign-in method* → activer **E-mail/Mot de passe**, **Google** et **Anonyme**
-   (Anonyme = l'accès sans compte pour signaler et inventorier).
-3. **Firestore Database** → Créer une base de données → mode **production** → région **europe-west** (Belgique, `eur3` ou `europe-west1`).
-4. **Storage** (pour les photos) : depuis février 2026, Google demande le plan **Blaze** pour activer Storage,
-   même si l'usage reste dans le quota gratuit. Passe au plan Blaze, puis **mets une alerte budget à 5 €**
-   (Google Cloud → Facturation → Budgets et alertes). Choisis une région US (`us-central1`, `us-east1` ou `us-west1`)
-   pour le bucket : ce sont les seules couvertes par le quota gratuit.
-5. **Paramètres du projet** (roue dentée) → *Vos applications* → icône **Web `</>`** → nom `BR Inventaire` →
-   copier les valeurs du bloc `firebaseConfig`.
+1. **Base de données** : dans le projet Coolify, *+ New* → *Database* → **PostgreSQL**. Démarre-la et copie
+   son **URL interne** (`postgres://…`).
+2. **Application** : *+ New* → *Application* → dépôt GitHub `Azertym59/Br-inventory`, branche `main`,
+   build pack **Dockerfile**.
+   - Port exposé : `3000`
+   - Domaine : `https://br.tecaled.fr`
+   - Variables d'environnement : `DATABASE_URL` = l'URL interne de la base
+     (facultatif : `REF_PREFIX=BR` pour le préfixe des références)
+   - Stockage persistant : un volume monté sur **`/data`** (photos)
+   - *Auto Deploy* activé : chaque modification poussée sur `main` est mise en ligne automatiquement
+3. **DNS** : chez le gestionnaire du domaine `tecaled.fr`, un enregistrement **A** `br` → l'IP du VPS.
+   Coolify génère le certificat HTTPS tout seul.
+4. Ouvre **https://br.tecaled.fr** : au tout premier lancement, l'app demande de **créer le compte
+   administrateur**.
 
-## 2. Configurer le projet en local
+## Premier démarrage
 
-```bash
-git clone https://github.com/Azertym59/br-inventory.git
-cd br-inventory
-npm install
-npm run dev               # http://localhost:5173 (déjà branché sur le projet br-inventory)
-```
-
-## 3. Publier les règles de sécurité et mettre en ligne
-
-```bash
-npm install -g firebase-tools
-firebase login
-firebase deploy --only firestore,storage   # règles + index
-npm run build
-firebase deploy --only hosting         # l'app est en ligne sur https://<projet>.web.app
-```
-
-Ajoute ensuite le domaine `<projet>.web.app` (et ton domaine perso si tu en mets un) dans
-Authentication → Paramètres → **Domaines autorisés**.
-
-## 4. Premier démarrage
-
-1. Ouvre l'app, **crée ton compte**. Tout nouveau compte est « technicien ».
-2. Dans la console Firebase → Firestore → collection `utilisateurs` → ton document → passe `role` à **`admin`**.
-3. Recharge l'app (connecte-toi avec « Je suis technicien ou admin ») → ⚙️ **Administration** :
-   - **Catégories** → « Installer les catégories standard » (dalles, moniteurs, modules, processeurs Novastar,
-     cartes de réception, hubs, CVT, matrices, straps RJ45/powerCON, fibres, câbles vidéo, alimentations,
-     main power, câbles 32/63 A, champignons, disjoncteurs, ordinateurs, claviers, souris).
-   - **Lieux** → créer le dépôt BR et les stades.
-   - **Équipe** → quand tes techniciens et admins ont créé leur compte, ajuste leur rôle.
+Connecté en admin, ⚙️ → **Administration** :
+- **Catégories** → « Installer les catégories standard » (dalles, moniteurs, modules, processeurs Novastar,
+  cartes de réception, hubs, CVT, matrices, straps RJ45/powerCON, fibres, câbles vidéo, alimentations,
+  main power, câbles 32/63 A, champignons, disjoncteurs, ordinateurs, claviers, souris).
+- **Lieux** → le dépôt BR et les stades.
+- **Équipe** → « Créer un compte » pour chaque technicien et admin (email + mot de passe provisoire).
 
 ## Rôles
 
 | Qui | Connexion | Peut faire |
 |---|---|---|
-| N'importe qui (personnel du stade, prestataire…) | **Sans compte** : juste son nom, mémorisé sur le téléphone | Scanner, consulter la fiche, inventorier, signaler un problème avec photos |
-| Technicien (2-3) | Compte email ou Google | + réparations (démarrer, clôturer avec photos), créer du matériel, imprimer les étiquettes |
-| Admin (2-3) | Compte email ou Google | + **valider** les signalements sans compte, **re-dispatcher** le matériel entre parcs, assigner les tickets, gérer lieux / catégories / modèles / équipe |
+| N'importe qui (personnel du stade, prestataire…) | **Sans compte** : juste son nom | Scanner, consulter la fiche, inventorier, signaler un problème avec photos |
+| Technicien | Email + mot de passe | + réparations (démarrer, clôturer avec photos), créer du matériel, imprimer les étiquettes |
+| Admin | Email + mot de passe | + **valider** les signalements sans compte, **re-dispatcher** le matériel entre parcs, assigner les tickets, gérer lieux / catégories / modèles / équipe |
 
-- Un signalement **sans compte** n'ouvre pas de ticket directement : il arrive dans « À valider » chez les admins
-  (anti-spam et doublons). Un signalement fait par un technicien ou un admin ouvre le ticket tout de suite.
-- Si un matériel est scanné dans un **autre parc** que le sien, un admin le déplace directement ; pour les autres,
-  une **proposition de déplacement** part en validation.
-- Changer le parc d'un matériel est réservé aux admins (verrouillé aussi dans les règles Firestore).
+- Un signalement **sans compte** arrive dans « À valider » chez les admins avant de devenir un ticket.
+- Matériel scanné dans un **autre parc** que le sien : un admin le déplace directement ; pour les autres,
+  une proposition de déplacement part en validation.
+- Les droits sont vérifiés **côté serveur** (`server/api.ts`).
+- Mot de passe oublié : un admin en définit un nouveau depuis **Équipe**.
 
 ## Étiquettes Niimbot B1
 
-- **Par lot** : écran Étiquettes → filtres → *Exporter Excel* → dans l'appli Niimbot, créer un modèle,
-  importer le fichier Excel et associer la colonne **URL** à un QR code, **Référence** et **Nom** à des textes.
-- **À l'unité** :
-  - **Android (Chrome)** / ordinateur : impression directe en Bluetooth (librairie open source NiimBlue, non officielle).
-  - **iPhone** : l'étiquette est générée en image et partagée vers l'appli Niimbot.
-- Le QR code contient l'adresse `https://<app>/m/BR-00042` : scanné avec l'appareil photo du téléphone, il ouvre
-  directement la fiche.
+- **Numérotation des séries** : à la création de plusieurs pièces identiques, elles sont numérotées
+  (« Dalle 001 », « Dalle 002 »…). Des pièces déjà créées se numérotent depuis l'écran Étiquettes.
+- **Par lot** : filtre catégorie / modèle / lieu, puis plage « du n° X au n° Y » ; impression Bluetooth
+  (Chrome Android / ordinateur) avec bouton Arrêter, ou export Excel pour l'appli Niimbot.
+- **À l'unité** : Bluetooth direct sur Android, partage d'image vers l'appli Niimbot sur iPhone.
+- Le QR code contient `https://br.tecaled.fr/m/BR-00042` : scanné avec l'appareil photo, il ouvre la fiche.
 
-## Fonctionnement hors ligne
+## Hors ligne
 
-Firestore garde une copie locale : dans un sous-sol sans réseau, on peut consulter les fiches, inventorier et
-changer des statuts ; tout se synchronise au retour du réseau. **Création de matériel et envoi de photos
-nécessitent le réseau** (numérotation et stockage côté serveur).
+L'app garde une copie des données sur le téléphone. Sans réseau, on peut consulter les fiches,
+inventorier et changer des statuts : ces actions sont mises en attente et envoyées dès que le réseau
+revient (bandeau en bas de l'écran). La création de matériel et les signalements avec photos demandent
+du réseau.
 
-## Structure
+## Développement
+
+```bash
+npm install
+# PostgreSQL local, puis :
+DATABASE_URL=postgres://… DATA_DIR=./data npm run dev:server   # API sur :3000
+npm run dev                                                     # app sur :5173 (proxy /api)
+npm run build:all && npm start                                  # version de production
+```
 
 ```
+server/
+  index.ts      démarrage, photos, fichiers de l'app
+  api.ts        toutes les routes /api et les règles d'accès
+  auth.ts       mots de passe (scrypt), sessions (cookie), rôles
+  db.ts         connexion PostgreSQL et schéma
 src/
-  firebase.ts          initialisation Firebase (+ cache hors ligne)
-  types.ts             modèle de données
-  data/catalogue.ts    catégories standard + calcul auto de la résolution des dalles
-  lib/actions.ts       toutes les écritures (création, inventaire, déplacement, tickets…) + historique
-  lib/etiquettes.ts    rendu des étiquettes, export Excel, partage iPhone
-  lib/niimbot.ts       impression Bluetooth B1
-  pages/               un fichier par écran
-firestore.rules        sécurité (rôles, historique en ajout seul)
-storage.rules          photos : connectés uniquement, images ≤ 5 Mo
+  lib/api.ts       appels au serveur
+  lib/outbox.ts    file d'attente hors ligne
+  lib/actions.ts   actions métier côté app
+  lib/etiquettes.ts, lib/niimbot.ts   étiquettes et impression B1
+  pages/        un fichier par écran
 ```

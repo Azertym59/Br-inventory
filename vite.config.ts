@@ -3,6 +3,8 @@ import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  // En développement, l'API tourne à part (npm run dev:server)
+  server: { proxy: { '/api': 'http://localhost:3000' } },
   plugins: [
     react(),
     VitePWA({
@@ -25,6 +27,7 @@ export default defineConfig({
       },
       workbox: {
         navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
     }),

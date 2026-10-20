@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore'
-import { db } from '../firebase'
+import { get } from '../lib/api'
 import { changerStatut, deplacer, inventorier, LIBELLES_STATUT, modifierMateriel } from '../lib/actions'
 import { useAuth } from '../lib/auth'
 import { libelleNumero } from '../lib/etiquettes'
@@ -31,12 +30,10 @@ export default function Fiche() {
 
   useEffect(() => {
     if (anonyme) return
-    return onSnapshot(
-      query(collection(db, 'evenements'), where('materielRef', '==', ref), orderBy('date', 'desc'), limit(40)),
-      (s) => setHisto(s.docs.map((d) => ({ id: d.id, ...d.data() }) as Evenement)),
-      (e) => console.error(e),
-    )
-  }, [ref, anonyme])
+    let ok = true
+    get<Evenement[]>(`/evenements?ref=${encodeURIComponent(ref)}&limite=40`).then((e) => { if (ok) setHisto(e) }).catch(() => {})
+    return () => { ok = false }
+  }, [ref, anonyme, materiel])
 
   if (!m) {
     return (
@@ -50,15 +47,15 @@ export default function Fiche() {
   const ctx = { user: profil!, lieu: lieuCourant }
   const cat = categories.find((c) => c.id === m.categorieId)
   const tickets = ticketsActifs.filter((t) => t.materielRef === m.ref)
-  const inventorieAujourdhui = m.dernierInventaire?.date && m.dernierInventaire.date.toDate().toDateString() === new Date().toDateString()
+  const inventorieAujourdhui = m.dernierInventaire?.date && new Date(m.dernierInventaire.date).toDateString() === new Date().toDateString()
 
   const presentIci = async (lieuId?: string) => {
     const lieu = lieux.find((l) => l.id === (lieuId ?? lieuCourant?.id))
     if (!lieu) { setSheet('lieu-inv'); return }
     setBusy(true)
     try {
-      const { deplace, propose } = await inventorier({ ...ctx, lieu }, m, lieu)
-      toast(deplace ? `Inventorié · déplacé vers ${lieu.nom}` : propose ? `Inventorié · déplacement vers ${lieu.nom} proposé aux admins` : 'Inventorié ✓')
+      const { deplace, propose, enAttente } = await inventorier({ ...ctx, lieu }, m, lieu)
+      toast(enAttente ? 'Pas de réseau : inventaire enregistré, envoi automatique au retour du réseau' : deplace ? `Inventorié · déplacé vers ${lieu.nom}` : propose ? `Inventorié · déplacement vers ${lieu.nom} proposé aux admins` : 'Inventorié ✓', enAttente ? 'info' : 'ok')
     } catch (e) { toast('Erreur : ' + String(e), 'err') } finally { setBusy(false) }
   }
 

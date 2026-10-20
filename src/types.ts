@@ -1,4 +1,5 @@
-import type { Timestamp } from 'firebase/firestore'
+// Dates : chaînes ISO renvoyées par le serveur
+type Timestamp = string
 
 export type Role = 'anonyme' | 'technicien' | 'admin'
 
