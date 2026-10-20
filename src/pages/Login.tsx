@@ -48,6 +48,7 @@ export default function Login() {
     try {
       if (mode === 'connexion') await signInWithEmailAndPassword(auth, email.trim(), mdp)
       else {
+        try { sessionStorage.setItem('nomInscription', nom.trim()) } catch { /* rien */ }
         const cred = await createUserWithEmailAndPassword(auth, email.trim(), mdp)
         if (nom.trim()) await updateProfile(cred.user, { displayName: nom.trim() })
       }

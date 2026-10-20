@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import { BottomNav } from '../components/ui'
 import { Icon } from '../components/Icon'
@@ -8,6 +9,7 @@ type Filtre = 'tous' | 'stades' | 'depot'
 
 export default function Lieux() {
   const { lieux, materiel } = useData()
+  const { anonyme } = useAuth()
   const [filtre, setFiltre] = useState<Filtre>('tous')
   const [q, setQ] = useState('')
 
@@ -73,9 +75,9 @@ export default function Lieux() {
                     <div className="row small" style={{ gap: 14, fontWeight: 600, color: 'var(--text-3)', flexWrap: 'wrap' }}>
                       <span>{ok} OK</span><span>{surv} à surveiller</span><span>{panne} en panne</span>
                     </div>
-                    <div className="grid-2">
+                    <div className={anonyme ? 'stack' : 'grid-2'}>
                       <Link to={`/inventaire/${l.id}`} className="btn small">Lancer un inventaire</Link>
-                      <Link to={`/etiquettes?lieu=${l.id}`} className="btn small">Étiquettes du lieu</Link>
+                      {!anonyme && <Link to={`/etiquettes?lieu=${l.id}`} className="btn small">Étiquettes du lieu</Link>}
                     </div>
                   </div>
                 )

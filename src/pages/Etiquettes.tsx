@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth'
 import { useData } from '../lib/data'
 import {
   bluetoothDisponible, dessinerEtiquette, exporterExcel, FORMATS, formatParDefaut, memoriserFormat,
-  partagerEtiquette, plateforme, type FormatEtiquette,
+  fichierEtiquette, partagerFichier, plateforme, type FormatEtiquette,
 } from '../lib/etiquettes'
 import { BottomNav, toast } from '../components/ui'
 import { Icon } from '../components/Icon'
@@ -52,14 +52,30 @@ export default function Etiquettes() {
 
   const choisirFormat = (f: FormatEtiquette) => { setFormat(f); memoriserFormat(f) }
 
+  // Module Bluetooth préchargé : le clic doit ouvrir la liste des imprimantes sans attendre
+  const niimbot = useRef<typeof import('../lib/niimbot') | null>(null)
+  useEffect(() => { if (bt) import('../lib/niimbot').then((m) => { niimbot.current = m }).catch(() => {}) }, [bt])
+
+  // Image iPhone préparée d'avance (Safari refuse le partage s'il arrive trop tard après le clic)
+  const [fichier, setFichier] = useState<File | null>(null)
+  useEffect(() => {
+    let ok = true
+    if (unite) fichierEtiquette(unite, format).then((f) => { if (ok) setFichier(f) })
+    return () => { ok = false; setFichier(null) }
+  }, [unite, format])
+
   const imprimerBluetooth = async (items: Materiel[]) => {
-    setBusy('Connexion à l’imprimante…')
+    const n = niimbot.current
+    if (!n) { toast('Module d\u2019impression en cours de chargement, réessaie', 'info'); return }
+    setBusy('Connexion à l\u2019imprimante…')
     try {
-      const { connecterImprimante, imprimerCanvas } = await import('../lib/niimbot')
-      await connecterImprimante()
+      await n.connecterImprimante()
+      const tete = n.teteImpression()
       for (let i = 0; i < items.length; i++) {
         setBusy(`Impression ${i + 1} / ${items.length}…`)
-        await imprimerCanvas(await dessinerEtiquette(items[i], format, items[i].lieuNom))
+        const canvas = await dessinerEtiquette(items[i], format, items[i].lieuNom,
+          tete.direction === 'top' ? tete.pixels : Infinity, tete.direction === 'left' ? tete.pixels : Infinity)
+        await n.imprimerCanvas(canvas)
       }
       await marquerEtiquetes(ctx, items)
       toast(`${items.length} étiquette(s) imprimée(s)`)
@@ -139,10 +155,11 @@ export default function Etiquettes() {
             ) : (
               <>
                 <div className="note warn">{os === 'ios' ? 'Sur iPhone, l’impression passe par l’appli Niimbot : l’étiquette est générée en image au bon format.' : 'Ce navigateur ne gère pas le Bluetooth : l’étiquette est générée en image.'}</div>
-                <button type="button" className="btn primary block" disabled={!unite} onClick={async () => {
-                  if (!unite) return
-                  const r = await partagerEtiquette(unite, format).catch(() => null)
-                  if (r) { await marquerEtiquetes(ctx, [unite]); toast(r === 'partage' ? 'Ouvre-la dans Niimbot pour imprimer' : 'Image téléchargée') }
+                <button type="button" className="btn primary block" disabled={!unite || !fichier} onClick={() => {
+                  if (!unite || !fichier) return
+                  partagerFichier(fichier).then(async (r) => {
+                    await marquerEtiquetes(ctx, [unite]); toast(r === 'partage' ? 'Ouvre-la dans Niimbot pour imprimer' : 'Image téléchargée')
+                  }).catch(() => {})
                 }}><Icon name="share" stroke={2.4} />{os === 'ios' ? 'Partager vers Niimbot' : 'Télécharger l’image'}</button>
               </>
             )}

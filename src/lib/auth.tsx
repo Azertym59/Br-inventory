@@ -17,6 +17,11 @@ interface AuthState {
 const Ctx = createContext<AuthState | null>(null)
 const CLE_NOM = 'nomDeclarant'
 
+// Nom saisi à la création du compte (onAuthStateChanged arrive avant updateProfile)
+function nomInscription(): string {
+  try { return sessionStorage.getItem('nomInscription') ?? '' } catch { return '' }
+}
+
 function nomLocal(): string {
   try { return localStorage.getItem(CLE_NOM) ?? '' } catch { return '' }
 }
@@ -49,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!snap.exists()) {
           // Premier compte équipe : technicien, un admin pourra le promouvoir
           await setDoc(ref, {
-            nom: u.displayName || (u.email ? u.email.split('@')[0] : 'Utilisateur'),
+            nom: u.displayName || nomInscription() || (u.email ? u.email.split('@')[0] : 'Utilisateur'),
             email: u.email || '',
             role: 'technicien',
             actif: true,

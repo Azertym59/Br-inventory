@@ -127,6 +127,21 @@ export const estAdmin = (ctx: Contexte) => ctx.user.role === 'admin'
 
 // Scan « présent ici ». Si le matériel est trouvé dans un autre parc :
 // un admin le déplace directement, sinon une proposition de déplacement part en validation.
+// Les écritures partent dans le cache local et se synchronisent quand le réseau revient :
+// on ne les attend pas, sinon l'écran resterait bloqué hors ligne (sous-sols de stades).
+function enFond(p: Promise<unknown>, quoi: string) {
+  p.catch((e) => console.error(`Échec de synchronisation (${quoi})`, e))
+}
+
+function propositionDejaEnvoyee(cle: string): boolean {
+  try {
+    const deja = JSON.parse(localStorage.getItem('propositionsEnvoyees') ?? '[]') as string[]
+    if (deja.includes(cle)) return true
+    localStorage.setItem('propositionsEnvoyees', JSON.stringify([...deja.slice(-200), cle]))
+  } catch { /* stockage indisponible */ }
+  return false
+}
+
 export async function inventorier(ctx: Contexte, m: Materiel, lieu: Lieu, gps?: Gps | null): Promise<{ deplace: boolean; propose: boolean }> {
   const position = gps === undefined ? await positionGps(4000) : gps
   const ailleurs = m.lieuId !== lieu.id
@@ -138,16 +153,16 @@ export async function inventorier(ctx: Contexte, m: Materiel, lieu: Lieu, gps?: 
     maj.lieuId = lieu.id
     maj.lieuNom = lieu.nom
   }
-  await updateDoc(doc(db, 'materiel', m.ref), maj)
-  if (deplace) await journal(ctx, m, 'deplacement', `Trouvé à ${lieu.nom} (était à ${m.lieuNom})`, { gps: position, lieu })
-  if (ailleurs && !deplace) {
-    await addDoc(collection(db, 'propositions'), {
+  enFond(updateDoc(doc(db, 'materiel', m.ref), maj), 'inventaire')
+  if (deplace) enFond(journal(ctx, m, 'deplacement', `Trouvé à ${lieu.nom} (était à ${m.lieuNom})`, { gps: position, lieu }), 'journal')
+  if (ailleurs && !deplace && !propositionDejaEnvoyee(`${m.ref}>${lieu.id}`)) {
+    enFond(addDoc(collection(db, 'propositions'), {
       materielRef: m.ref, materielNom: m.nom, deLieuId: m.lieuId, deLieuNom: m.lieuNom,
       versLieuId: lieu.id, versLieuNom: lieu.nom, par: { uid: ctx.user.uid, nom: ctx.user.nom },
       statut: 'a_valider', creeLe: serverTimestamp(),
-    })
+    }), 'proposition')
   }
-  await journal(ctx, m, 'inventaire', ailleurs && !deplace ? `Inventorié à ${lieu.nom} (attendu à ${m.lieuNom})` : 'Inventorié', { gps: position, lieu })
+  enFond(journal(ctx, m, 'inventaire', ailleurs && !deplace ? `Inventorié à ${lieu.nom} (attendu à ${m.lieuNom})` : 'Inventorié', { gps: position, lieu }), 'journal')
   return { deplace, propose: ailleurs && !deplace }
 }
 
@@ -186,8 +201,8 @@ export async function deplacer(ctx: Contexte, m: Materiel, vers: Lieu, commentai
 }
 
 export async function changerStatut(ctx: Contexte, m: Materiel, statut: Statut, commentaire?: string) {
-  await updateDoc(doc(db, 'materiel', m.ref), { statut })
-  await journal(ctx, m, 'statut', `Statut : ${LIBELLES_STATUT[statut]}`, { commentaire: commentaire || null })
+  enFond(updateDoc(doc(db, 'materiel', m.ref), { statut }), 'statut')
+  enFond(journal(ctx, m, 'statut', `Statut : ${LIBELLES_STATUT[statut]}`, { commentaire: commentaire || null }), 'journal')
 }
 
 export async function modifierMateriel(ctx: Contexte, m: Materiel, champs: Partial<Pick<Materiel, 'nom' | 'valeurs' | 'quantite'>>) {
@@ -272,6 +287,7 @@ export async function signaler(
 
 export async function traiterSignalement(ctx: Contexte, s: SignalementAValider, accepter: boolean, materiel: Materiel | undefined, gravite?: Gravite) {
   let numero: string | null = null
+  if (accepter && !materiel) throw new Error('Matériel introuvable : impossible de créer le ticket')
   if (accepter && materiel) {
     numero = await ouvrirTicket(materiel, {
       lieuId: s.lieuId, lieuNom: s.lieuNom, description: s.description, gravite: gravite ?? s.gravite, photos: s.photos, gps: s.gps,

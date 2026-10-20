@@ -23,7 +23,7 @@ function useCollection<T>(path: string, enabled: boolean, idKey = 'id', onlyActi
   const [items, setItems] = useState<T[]>([])
   const [loaded, setLoaded] = useState(false)
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled) { setItems([]); setLoaded(false); return }
     const ref = collection(db, path)
     const q = onlyActive ? query(ref, where(onlyActive[0], 'in', onlyActive[1])) : ref
     return onSnapshot(q, (snap) => {

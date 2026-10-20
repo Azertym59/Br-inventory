@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { addDoc, arrayUnion, collection, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore'
+import { arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import { db } from '../firebase'
 import { extraireRef, inventorier, positionGps } from '../lib/actions'
 import { useAuth } from '../lib/auth'
@@ -14,7 +14,7 @@ export default function Inventaire() {
   const { lieuId = '' } = useParams()
   const nav = useNavigate()
   const { profil } = useAuth()
-  const { lieux, materiel, choisirLieu } = useData()
+  const { lieux, materiel, choisirLieu, pret } = useData()
   const lieu = lieux.find((l) => l.id === lieuId)
   const [invId, setInvId] = useState<string | null>(null)
   const [attendus, setAttendus] = useState<string[]>([])
@@ -27,7 +27,7 @@ export default function Inventaire() {
 
   // Démarre (ou reprend) la session d'inventaire de ce lieu
   useEffect(() => {
-    if (!lieu || !profil) return
+    if (!lieu || !profil || !pret) return
     choisirLieu(lieu.id)
     let annule = false
     const cle = `inventaire-${lieu.id}`
@@ -35,7 +35,11 @@ export default function Inventaire() {
       let id: string | null = null
       try { id = localStorage.getItem(cle) } catch { /* rien */ }
       if (id) {
-        const s = await getDoc(doc(db, 'inventaires', id)).catch(() => null)
+        // Lecture depuis le cache si pas de réseau
+        const s = await Promise.race([
+          getDoc(doc(db, 'inventaires', id)).catch(() => null),
+          new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+        ])
         if (s?.exists() && !s.data().termineLe) {
           if (annule) return
           setInvId(id); setAttendus(s.data().attendus ?? []); setScannes(s.data().scannes ?? [])
@@ -43,17 +47,19 @@ export default function Inventaire() {
         }
       }
       const att = materiel.filter((m) => m.lieuId === lieu.id).map((m) => m.ref)
-      const ref = await addDoc(collection(db, 'inventaires'), {
+      if (annule) return
+      // Identifiant créé localement : fonctionne même sans réseau
+      const ref = doc(collection(db, 'inventaires'))
+      try { localStorage.setItem(cle, ref.id) } catch { /* rien */ }
+      setInvId(ref.id); setAttendus(att); setScannes([])
+      setDoc(ref, {
         lieuId: lieu.id, lieuNom: lieu.nom, par: { uid: profil.uid, nom: profil.nom },
         attendus: att, scannes: [], demarreLe: serverTimestamp(), termineLe: null,
-      })
-      try { localStorage.setItem(cle, ref.id) } catch { /* rien */ }
-      if (annule) return
-      setInvId(ref.id); setAttendus(att); setScannes([])
+      }).catch((e) => console.error(e))
     })()
     positionGps(6000).then((p) => { gps.current = p })
     return () => { annule = true }
-  }, [lieu?.id, profil?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [lieu?.id, profil?.uid, pret]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const parRef = useMemo(() => new Map(materiel.map((m) => [m.ref, m])), [materiel])
   const manquants = attendus.filter((r) => !scannes.includes(r))
@@ -73,14 +79,14 @@ export default function Inventaire() {
     setDernier({ ref: m.ref, ok: true, msg: !ailleurs ? m.nom : admin ? `${m.nom} · déplacé ici (était à ${m.lieuNom})` : `${m.nom} · attendu à ${m.lieuNom}, déplacement proposé aux admins` })
     try {
       await inventorier({ user: profil, lieu }, m, lieu, gps.current ?? null)
-      await updateDoc(doc(db, 'inventaires', invId), { scannes: arrayUnion(m.ref) })
+      updateDoc(doc(db, 'inventaires', invId), { scannes: arrayUnion(m.ref) }).catch((e) => console.error(e))
     } catch (e) { toast('Erreur : ' + String(e), 'err') } finally { enCours.current.delete(m.ref) }
   }
 
   const cloturer = async () => {
     if (!invId || !lieu) return
     if (manquants.length && !confirm(`${manquants.length} matériel(s) non scanné(s). Clôturer quand même ?`)) return
-    await updateDoc(doc(db, 'inventaires', invId), { termineLe: serverTimestamp() })
+    updateDoc(doc(db, 'inventaires', invId), { termineLe: serverTimestamp() }).catch((e) => console.error(e))
     try { localStorage.removeItem(`inventaire-${lieu.id}`) } catch { /* rien */ }
     toast(`Inventaire clôturé · ${scannes.length}/${total}`)
     nav(`/lieux/${lieu.id}`)

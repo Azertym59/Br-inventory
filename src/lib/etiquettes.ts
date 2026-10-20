@@ -55,9 +55,12 @@ function couper(ctx: CanvasRenderingContext2D, texte: string, maxW: number, maxL
 }
 
 // Dessine l'étiquette (QR + référence + nom) en noir et blanc, à la taille réelle d'impression
-export async function dessinerEtiquette(m: Pick<Materiel, 'ref' | 'nom'>, f: FormatEtiquette, sousTitre = ''): Promise<HTMLCanvasElement> {
-  const W = f.largeurMm * PX_PAR_MM
-  const H = f.hauteurMm * PX_PAR_MM
+// maxW / maxH : limite de la tête d'impression (la B1 imprime 384 px = 48 mm de large)
+export async function dessinerEtiquette(
+  m: Pick<Materiel, 'ref' | 'nom'>, f: FormatEtiquette, sousTitre = '', maxW = Infinity, maxH = Infinity,
+): Promise<HTMLCanvasElement> {
+  const W = Math.min(f.largeurMm * PX_PAR_MM, maxW)
+  const H = Math.min(f.hauteurMm * PX_PAR_MM, maxH)
   const c = document.createElement('canvas')
   c.width = W
   c.height = H
@@ -68,7 +71,7 @@ export async function dessinerEtiquette(m: Pick<Materiel, 'ref' | 'nom'>, f: For
   ctx.textBaseline = 'top'
 
   const marge = 2 * PX_PAR_MM
-  const carre = f.hauteurMm === f.largeurMm
+  const carre = Math.abs(f.hauteurMm - f.largeurMm) < 6
   const qrTaille = carre ? Math.round(H * 0.62) : H - marge * 2
   const qr = document.createElement('canvas')
   await QRCode.toCanvas(qr, urlMateriel(m.ref), { margin: 0, width: qrTaille, errorCorrectionLevel: 'M', color: { dark: '#000', light: '#fff' } })
@@ -105,22 +108,25 @@ export async function dessinerEtiquette(m: Pick<Materiel, 'ref' | 'nom'>, f: For
   return c
 }
 
-// iPhone : on génère une image et on la partage vers l'appli Niimbot
-export async function partagerEtiquette(m: Materiel, f: FormatEtiquette): Promise<'partage' | 'telecharge'> {
+// iPhone : l'image est préparée à l'avance, car Safari n'autorise le partage
+// que directement au moment du clic.
+export async function fichierEtiquette(m: Materiel, f: FormatEtiquette): Promise<File> {
   const canvas = await dessinerEtiquette(m, f, m.lieuNom)
   const blob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/png'))
-  const fichier = new File([blob], `${m.ref}.png`, { type: 'image/png' })
+  return new File([blob], `${m.ref}.png`, { type: 'image/png' })
+}
+
+export function partagerFichier(fichier: File): Promise<'partage' | 'telecharge'> {
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean }
   if (nav.canShare?.({ files: [fichier] })) {
-    await navigator.share({ files: [fichier], title: m.ref })
-    return 'partage'
+    return navigator.share({ files: [fichier], title: fichier.name.replace('.png', '') }).then(() => 'partage' as const)
   }
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
+  a.href = URL.createObjectURL(fichier)
   a.download = fichier.name
   a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-  return 'telecharge'
+  return Promise.resolve('telecharge')
 }
 
 // Impression par lot : fichier Excel à importer dans l'appli Niimbot (colonne URL = QR code)
