@@ -1,0 +1,77 @@
+rules_version = '2';
+
+// Règles de sécurité BR Inventaire
+// - Il faut être connecté ET avoir une fiche dans /utilisateurs, active.
+// - Rôles : technicien < responsable < admin.
+// - L'historique (/evenements) est en ajout seul : personne ne peut le modifier.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/utilisateurs/$(request.auth.uid)).data; }
+    function isUser() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/utilisateurs/$(request.auth.uid))
+        && me().actif == true;
+    }
+    function rank(role) { return role == 'admin' ? 3 : (role == 'responsable' ? 2 : 1); }
+    function atLeast(role) { return isUser() && rank(me().role) >= rank(role); }
+
+    match /utilisateurs/{uid} {
+      allow read: if isUser() || (signedIn() && request.auth.uid == uid);
+      // Première connexion : on crée sa propre fiche, en technicien uniquement
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'technicien'
+        && request.resource.data.actif == true;
+      // Chacun peut changer son nom ; seul un admin change rôle / activation
+      allow update: if atLeast('admin')
+        || (isUser() && request.auth.uid == uid
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.actif == resource.data.actif);
+      allow delete: if atLeast('admin');
+    }
+
+    match /lieux/{id} {
+      allow read: if isUser();
+      allow write: if atLeast('responsable');
+    }
+
+    match /categories/{id} {
+      allow read: if isUser();
+      allow write: if atLeast('responsable');
+    }
+
+    match /modeles/{id} {
+      allow read: if isUser();
+      allow write: if atLeast('responsable');
+    }
+
+    match /materiel/{ref} {
+      allow read: if isUser();
+      allow create, update: if isUser();
+      allow delete: if atLeast('admin');
+    }
+
+    match /evenements/{id} {
+      allow read: if isUser();
+      allow create: if isUser() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /tickets/{id} {
+      allow read: if isUser();
+      allow create: if isUser() && request.resource.data.signalePar.uid == request.auth.uid;
+      allow update: if isUser();
+      allow delete: if atLeast('admin');
+    }
+
+    match /inventaires/{id} {
+      allow read, create, update: if isUser();
+      allow delete: if atLeast('responsable');
+    }
+
+    match /compteurs/{id} {
+      allow read, write: if isUser();
+    }
+  }
+}

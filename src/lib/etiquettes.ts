@@ -1,0 +1,148 @@
+import QRCode from 'qrcode'
+import writeXlsxFile from 'write-excel-file/browser'
+import type { Materiel } from '../types'
+import { urlMateriel } from './actions'
+
+export interface FormatEtiquette {
+  id: string
+  label: string
+  largeurMm: number
+  hauteurMm: number
+}
+
+export const FORMATS: FormatEtiquette[] = [
+  { id: '40x30', label: '40 × 30', largeurMm: 40, hauteurMm: 30 },
+  { id: '50x30', label: '50 × 30', largeurMm: 50, hauteurMm: 30 },
+  { id: '50x50', label: '50 × 50', largeurMm: 50, hauteurMm: 50 },
+]
+
+export function formatParDefaut(): FormatEtiquette {
+  let id = '50x30'
+  try { id = localStorage.getItem('formatEtiquette') || id } catch { /* rien */ }
+  return FORMATS.find((f) => f.id === id) ?? FORMATS[1]
+}
+export function memoriserFormat(f: FormatEtiquette) {
+  try { localStorage.setItem('formatEtiquette', f.id) } catch { /* rien */ }
+}
+
+const PX_PAR_MM = 8 // 203 dpi, la résolution de la Niimbot B1
+
+function ajusterTexte(ctx: CanvasRenderingContext2D, texte: string, maxW: number, taille: number, poids: string, police: string): number {
+  let t = taille
+  ctx.font = `${poids} ${t}px ${police}`
+  while (ctx.measureText(texte).width > maxW && t > 10) {
+    t -= 1
+    ctx.font = `${poids} ${t}px ${police}`
+  }
+  return t
+}
+
+function couper(ctx: CanvasRenderingContext2D, texte: string, maxW: number, maxLignes: number): string[] {
+  const mots = texte.split(/\s+/)
+  const lignes: string[] = []
+  let cur = ''
+  for (const mot of mots) {
+    const essai = cur ? `${cur} ${mot}` : mot
+    if (ctx.measureText(essai).width <= maxW) cur = essai
+    else {
+      if (cur) lignes.push(cur)
+      cur = mot
+      if (lignes.length === maxLignes) break
+    }
+  }
+  if (cur && lignes.length < maxLignes) lignes.push(cur)
+  return lignes.slice(0, maxLignes)
+}
+
+// Dessine l'étiquette (QR + référence + nom) en noir et blanc, à la taille réelle d'impression
+export async function dessinerEtiquette(m: Pick<Materiel, 'ref' | 'nom'>, f: FormatEtiquette, sousTitre = ''): Promise<HTMLCanvasElement> {
+  const W = f.largeurMm * PX_PAR_MM
+  const H = f.hauteurMm * PX_PAR_MM
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')!
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = '#000'
+  ctx.textBaseline = 'top'
+
+  const marge = 2 * PX_PAR_MM
+  const carre = f.hauteurMm === f.largeurMm
+  const qrTaille = carre ? Math.round(H * 0.62) : H - marge * 2
+  const qr = document.createElement('canvas')
+  await QRCode.toCanvas(qr, urlMateriel(m.ref), { margin: 0, width: qrTaille, errorCorrectionLevel: 'M', color: { dark: '#000', light: '#fff' } })
+  const mono = '"JetBrains Mono", ui-monospace, monospace'
+  const sans = 'Inter, system-ui, sans-serif'
+
+  if (carre) {
+    ctx.drawImage(qr, Math.round((W - qrTaille) / 2), marge)
+    ctx.textAlign = 'center'
+    const y = marge + qrTaille + 8
+    const t1 = ajusterTexte(ctx, m.ref, W - marge * 2, 34, '700', mono)
+    ctx.fillText(m.ref, W / 2, y)
+    ajusterTexte(ctx, m.nom, W - marge * 2, 22, '700', sans)
+    ctx.fillText(couper(ctx, m.nom, W - marge * 2, 1)[0] ?? '', W / 2, y + t1 + 6)
+  } else {
+    ctx.drawImage(qr, marge, marge)
+    ctx.textAlign = 'left'
+    const x = marge + qrTaille + 12
+    const maxW = W - x - marge
+    let y = marge + 4
+    const t1 = ajusterTexte(ctx, m.ref, maxW, 34, '700', mono)
+    ctx.fillText(m.ref, x, y)
+    y += t1 + 10
+    ctx.font = `700 22px ${sans}`
+    for (const ligne of couper(ctx, m.nom, maxW, 3)) {
+      ctx.fillText(ligne, x, y)
+      y += 26
+    }
+    if (sousTitre) {
+      ctx.font = `600 17px ${sans}`
+      ctx.fillText(couper(ctx, sousTitre, maxW, 1)[0] ?? '', x, H - marge - 18)
+    }
+  }
+  return c
+}
+
+// iPhone : on génère une image et on la partage vers l'appli Niimbot
+export async function partagerEtiquette(m: Materiel, f: FormatEtiquette): Promise<'partage' | 'telecharge'> {
+  const canvas = await dessinerEtiquette(m, f, m.lieuNom)
+  const blob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/png'))
+  const fichier = new File([blob], `${m.ref}.png`, { type: 'image/png' })
+  const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean }
+  if (nav.canShare?.({ files: [fichier] })) {
+    await navigator.share({ files: [fichier], title: m.ref })
+    return 'partage'
+  }
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = fichier.name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+  return 'telecharge'
+}
+
+// Impression par lot : fichier Excel à importer dans l'appli Niimbot (colonne URL = QR code)
+export async function exporterExcel(items: Materiel[]) {
+  const entete = ['Référence', 'Nom', 'Catégorie', 'Lieu', 'URL'].map((v) => ({ value: v, fontWeight: 'bold' as const }))
+  const lignes = items.map((m) => [
+    { value: m.ref }, { value: m.nom }, { value: m.categorieNom }, { value: m.lieuNom }, { value: urlMateriel(m.ref) },
+  ])
+  const date = new Date().toISOString().slice(0, 10)
+  await writeXlsxFile([entete, ...lignes], {
+    columns: [{ width: 14 }, { width: 34 }, { width: 22 }, { width: 22 }, { width: 46 }],
+    sheet: 'Etiquettes',
+  }).toFile(`etiquettes-${date}.xlsx`)
+}
+
+export function plateforme(): 'android' | 'ios' | 'autre' {
+  const ua = navigator.userAgent
+  if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'ios'
+  if (/Android/i.test(ua)) return 'android'
+  return 'autre'
+}
+
+export function bluetoothDisponible(): boolean {
+  return typeof navigator !== 'undefined' && 'bluetooth' in navigator
+}

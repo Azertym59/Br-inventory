@@ -1,0 +1,72 @@
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { firebaseConfigured } from './firebase'
+import { AuthProvider, useAuth } from './lib/auth'
+import { DataProvider } from './lib/data'
+import { Chargement, ToastHost } from './components/ui'
+import Login from './pages/Login'
+import Accueil from './pages/Accueil'
+import Lieux from './pages/Lieux'
+import LieuDetail from './pages/LieuDetail'
+import Scan from './pages/Scan'
+import Fiche from './pages/Fiche'
+import Signalement from './pages/Signalement'
+import Tickets from './pages/Tickets'
+import TicketDetail from './pages/TicketDetail'
+import Inventaire from './pages/Inventaire'
+import Etiquettes from './pages/Etiquettes'
+import Ajout from './pages/Ajout'
+import Admin from './pages/Admin'
+
+function Routeur() {
+  const { firebaseUser, profil, loading, logout } = useAuth()
+  if (loading) return <Chargement />
+  if (!firebaseUser) return <Login />
+  if (!profil) return <Chargement />
+  if (!profil.actif) {
+    return (
+      <div className="page center stack" style={{ textAlign: 'center' }}>
+        <h1 className="h1">Compte désactivé</h1>
+        <p className="muted">Demandez à un administrateur de réactiver votre accès.</p>
+        <button className="btn" onClick={logout}>Se déconnecter</button>
+      </div>
+    )
+  }
+  return (
+    <DataProvider>
+      <Routes>
+        <Route path="/" element={<Accueil />} />
+        <Route path="/lieux" element={<Lieux />} />
+        <Route path="/lieux/:id" element={<LieuDetail />} />
+        <Route path="/scan" element={<Scan />} />
+        <Route path="/m/:ref" element={<Fiche />} />
+        <Route path="/m/:ref/signaler" element={<Signalement />} />
+        <Route path="/tickets" element={<Tickets />} />
+        <Route path="/tickets/:id" element={<TicketDetail />} />
+        <Route path="/inventaire/:lieuId" element={<Inventaire />} />
+        <Route path="/etiquettes" element={<Etiquettes />} />
+        <Route path="/ajout" element={<Ajout />} />
+        <Route path="/admin" element={<Admin />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </DataProvider>
+  )
+}
+
+export default function App() {
+  if (!firebaseConfigured) {
+    return (
+      <div className="app page stack">
+        <h1 className="h1">Configuration requise</h1>
+        <div className="note warn">Le fichier <span className="mono">.env</span> avec les clés Firebase est manquant. Suis le README, étape « Configurer Firebase ».</div>
+      </div>
+    )
+  }
+  return (
+    <AuthProvider>
+      <div className="app">
+        <Routeur />
+        <ToastHost />
+      </div>
+    </AuthProvider>
+  )
+}
